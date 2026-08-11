@@ -1,0 +1,39 @@
+﻿{
+    "Metadata":  {
+                     "ConfigVersion":  "1.0.0",
+                     "CreatedUtc":  "2026-08-09T07:16:15.2316951Z",
+                     "LastModifiedUtc":  "2026-08-09T07:16:15.2316951Z"
+                 },
+    "General":  {
+                    "Language":  "en",
+                    "Theme":  "Dark",
+                    "OptimizationLevel":  "Balanced",
+                    "SafeMode":  true,
+                    "ExpertMode":  false
+                },
+    "Logging":  {
+                    "LogLevel":  "Info",
+                    "LogRetentionDays":  30,
+                    "LogToConsole":  true,
+                    "LogToFile":  true
+                },
+    "Scan":  {
+                 "DeepScan":  false,
+                 "ScanTimeoutSeconds":  300,
+                 "IncludeSystemFiles":  false
+             },
+    "Gaming":  {
+                   "GameModePriority":  true,
+                   "NetworkOptimizationForGaming":  true,
+                   "DisableBackgroundAppsDuringGaming":  false
+               },
+    "AIRecommendation":  {
+                             "Enabled":  true,
+                             "ConfidenceThreshold":  0.75,
+                             "MaxRecommendationsPerScan":  20
+                         },
+    "Backup":  {
+                   "AutoBackupBeforeChanges":  true,
+                   "BackupRetentionCount":  10
+               }
+}
