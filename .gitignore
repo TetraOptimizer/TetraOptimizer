@@ -1,2 +1,6 @@
 ﻿Logs/
 *.log
+
+Config/DeviceIdentity.json
+
+Config/DeviceIdentity.json
