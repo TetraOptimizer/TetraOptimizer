@@ -90,12 +90,12 @@ Test-Case 'Execute alone cannot bypass missing approval' {
 
 Test-Case 'Approved Execute path reaches backup delete and verification' {
     $approval={param($r);[PSCustomObject]@{ApprovedRecommendationIds=@([string]$r.Recommendations[0].RecommendationId);DuplicateSelections=@{}}}
-    $exists=@{'C:\Synthetic\Temp\cache.tmp'=$true};$backupCalls=0;$deleteCalls=0
-    $backup={param($paths,$item);$script:backupCalls++;[PSCustomObject]@{Success=$true;BackupId='backup-1'}}
-    $delete={param($path,$item);$script:deleteCalls++;$exists[$path]=$false}
-    $pathExists={param($path);return [bool]$exists[$path]}
+    $state=[PSCustomObject]@{BackupCalls=0;DeleteCalls=0;Exists=@{'C:\Synthetic\Temp\cache.tmp'=$true}}
+    $backup={param($paths,$item);$state.BackupCalls++;[PSCustomObject]@{Success=$true;BackupId='backup-1'}}.GetNewClosure()
+    $delete={param($path,$item);$state.DeleteCalls++;$state.Exists[$path]=$false}.GetNewClosure()
+    $pathExists={param($path);return [bool]$state.Exists[$path]}.GetNewClosure()
     $p=Invoke-TetraPipeline -ScanProvider {New-SyntheticScan -WithCleanup} -ApprovalProvider $approval -Execute -BackupProvider $backup -DeleteProvider $delete -PathExistsProvider $pathExists
-    Assert-Equal 'ExecutedVerified' $p.Execution.Results[0].State 'Approved execution should verify.';Assert-Equal 1 $script:backupCalls 'Backup should run once.';Assert-Equal 1 $script:deleteCalls 'Delete should run once.';Assert-True $p.MutationAttempted 'Mutation should be reported.'
+    Assert-Equal 'ExecutedVerified' $p.Execution.Results[0].State 'Approved execution should verify.';Assert-Equal 1 $state.BackupCalls 'Backup should run once.';Assert-Equal 1 $state.DeleteCalls 'Delete should run once.';Assert-True $p.MutationAttempted 'Mutation should be reported.'
 }
 
 Test-Case 'Unknown approval id fails at Approval stage' {
