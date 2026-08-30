@@ -171,7 +171,7 @@ function Get-TetraKnowledgeBaseFilePath {
 .SYNOPSIS
     Ensures the Data folder exists on disk.
 .OUTPUTS
-    System.String - the Data directory path.
+    System.String - the (now guaranteed to exist) Data directory path.
 #>
 function Initialize-TetraKnowledgeBaseDirectory {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -492,7 +492,12 @@ function Get-TetraKnowledgeBaseItems {
 
         $filePath   = Get-TetraKnowledgeBaseFilePath -Category $Category
         $rawContent = Get-Content -LiteralPath $filePath -Raw -Encoding UTF8
-        $items      = @($rawContent | ConvertFrom-Json)
+        $parsedItems = ConvertFrom-Json -InputObject $rawContent
+        $items = [System.Collections.Generic.List[PSCustomObject]]::new()
+        foreach ($item in $parsedItems) {
+            $items.Add($item)
+        }
+        $items = $items.ToArray()
 
         $Script:TetraKnowledgeBaseCache[$Category] = $items
         return $items
