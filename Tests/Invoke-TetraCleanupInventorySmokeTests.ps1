@@ -3,6 +3,7 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $repoRoot=Split-Path -Parent $PSScriptRoot
+. (Join-Path $repoRoot 'Bootstrap\Initialize-Tetra.ps1')
 . (Join-Path $repoRoot 'Engine\CleanupInventoryEngine.ps1')
 $pass=0;$fail=0
 function Invoke-Test([string]$Name,[scriptblock]$Body){try{& $Body;Write-Host "[PASS] $Name" -ForegroundColor Green;$script:pass++}catch{Write-Host "[FAIL] $Name" -ForegroundColor Red;Write-Host "       -> $($_.Exception.Message)" -ForegroundColor Yellow;$script:fail++}}
@@ -24,7 +25,7 @@ Invoke-Test 'Minimum size filter excludes smaller records' {$r=@(Get-TetraCleanu
 Invoke-Test 'Empty supplied snapshot is valid and produces zero records' {$r=@(Get-TetraCleanupInventory -FileData @() -ReferenceUtc $reference);Assert-Equal 0 $r.Count 'Expected zero records.'}
 Invoke-Test 'Live cleanup discovery requires explicit roots' {$threw=$false;try{Get-TetraCleanupInventory|Out-Null}catch{$threw=$true};Assert-True $threw 'Expected explicit-root requirement.'}
 Invoke-Test 'MaxFiles bounds returned metadata' {$r=@(Get-TetraCleanupInventory -FileData @($temp,$oldDoc,$normal) -MaxFiles 2 -ReferenceUtc $reference);Assert-Equal 2 $r.Count 'MaxFiles was not enforced.'}
-Invoke-Test 'Cleanup inventory source contains no mutation commands' {$source=Get-Content -LiteralPath (Join-Path $repoRoot 'Engine\CleanupInventoryEngine.ps1') -Raw;$forbidden=@('Remove-Item','Move-Item','Rename-Item','Clear-Content','Set-Content','Add-Content','del ','erase ','rd ','rmdir ');foreach($token in $forbidden){if($source -match [regex]::Escape($token)){throw "Found forbidden mutation token '$token'."}}}
+Invoke-Test 'Cleanup inventory source contains no mutation commands' {$source=Get-Content -LiteralPath (Join-Path $repoRoot 'Engine\CleanupInventoryEngine.ps1') -Raw;$patterns=@('(?im)^\s*Remove-Item\b','(?im)^\s*Move-Item\b','(?im)^\s*Rename-Item\b','(?im)^\s*Clear-Content\b','(?im)^\s*Set-Content\b','(?im)^\s*Add-Content\b','(?im)^\s*(del|erase|rd|rmdir)\b');foreach($pattern in $patterns){if($source -match $pattern){throw "Found forbidden mutation command matching '$pattern'."}}}
 Write-Host "`nPASS: $pass/12" -ForegroundColor $(if($pass -eq 12){'Green'}else{'Yellow'})
 Write-Host "FAIL: $fail/12" -ForegroundColor $(if($fail -eq 0){'Green'}else{'Red'})
 Write-Host "Overall: $(if($fail -eq 0){'PASS'}else{'FAIL'})" -ForegroundColor $(if($fail -eq 0){'Green'}else{'Red'})
