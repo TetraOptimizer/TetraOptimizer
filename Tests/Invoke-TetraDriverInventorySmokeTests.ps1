@@ -1,0 +1,26 @@
+#Requires -Version 5.1
+[CmdletBinding()]param()
+Set-StrictMode -Version Latest;$ErrorActionPreference='Stop'
+$projectRoot=Split-Path $PSScriptRoot -Parent
+. (Join-Path $projectRoot 'Bootstrap\Initialize-Tetra.ps1')
+. (Join-Path $projectRoot 'Engine\DriverInventoryEngine.ps1')
+$results=[System.Collections.Generic.List[PSCustomObject]]::new()
+function Assert-True{param([bool]$Condition,[string]$Message)if(-not $Condition){throw $Message}}
+function Invoke-Test{param([string]$Name,[scriptblock]$Body)try{&$Body|Out-Null;$results.Add([PSCustomObject]@{TestName=$Name;Passed=$true;ErrorMessage=''})}catch{$results.Add([PSCustomObject]@{TestName=$Name;Passed=$false;ErrorMessage=$_.Exception.Message})}}
+function New-SyntheticDriver{param([string]$DeviceName='Example GPU',[string]$DeviceClass='DISPLAY',[string]$Provider='Example Vendor',[string]$Version='1.2.3',[string]$DeviceID='PCI\VEN_1234',[bool]$IsSigned=$true);[PSCustomObject]@{DeviceName=$DeviceName;DeviceClass=$DeviceClass;DriverProviderName=$Provider;Manufacturer=$Provider;DriverVersion=$Version;DriverDate=[datetime]'2026-08-01';InfName='oem42.inf';DeviceID=$DeviceID;IsSigned=$IsSigned;Signer='Example Signer'}}
+Invoke-Test 'Synthetic driver becomes correctly shaped inventory record' {$r=@(Get-TetraDriverInventory -DriverData @((New-SyntheticDriver)))[0];Assert-True($r.RecordType-eq'Driver')'RecordType mismatch.';Assert-True($r.EvidenceSource-eq'Win32_PnPSignedDriver')'Evidence source mismatch.'}
+Invoke-Test 'Driver version provider and INF evidence are preserved' {$r=@(Get-TetraDriverInventory -DriverData @((New-SyntheticDriver -Version '9.8.7' -Provider 'Vendor')))[0];Assert-True($r.DriverVersion-eq'9.8.7')'Version lost.';Assert-True($r.DriverProvider-eq'Vendor')'Provider lost.';Assert-True($r.InfName-eq'oem42.inf')'INF lost.'}
+Invoke-Test 'Driver date is normalized' {$r=@(Get-TetraDriverInventory -DriverData @((New-SyntheticDriver)))[0];Assert-True($r.DriverDate-match'^2026-08-01')"Unexpected date $($r.DriverDate)."}
+Invoke-Test 'Signed state is preserved as evidence' {$r=@(Get-TetraDriverInventory -DriverData @((New-SyntheticDriver -IsSigned $false)))[0];Assert-True($r.IsSigned-eq$false)'Signed state lost.'}
+Invoke-Test 'Display class maps to protected GPU KB item' {$o=@(ConvertTo-TetraDriverSystemState -InventoryRecords @(Get-TetraDriverInventory -DriverData @((New-SyntheticDriver -DeviceClass 'DISPLAY'))));Assert-True($o.Count-eq 1)'Expected one observation.';Assert-True($o[0].KnowledgeBaseId-eq'driver-gpu')'GPU mapping mismatch.'}
+Invoke-Test 'Network class maps to network adapter KB item' {$o=@(ConvertTo-TetraDriverSystemState -InventoryRecords @(Get-TetraDriverInventory -DriverData @((New-SyntheticDriver -DeviceClass 'Net'))));Assert-True($o[0].KnowledgeBaseId-eq'driver-network-adapter')'Network mapping mismatch.'}
+Invoke-Test 'Bluetooth class maps case-insensitively' {$o=@(ConvertTo-TetraDriverSystemState -InventoryRecords @(Get-TetraDriverInventory -DriverData @((New-SyntheticDriver -DeviceClass 'bLuEtOoTh'))));Assert-True($o[0].KnowledgeBaseId-eq'driver-bluetooth')'Bluetooth mapping mismatch.'}
+Invoke-Test 'Unknown driver class remains honest inventory evidence only' {$o=@(ConvertTo-TetraDriverSystemState -InventoryRecords @(Get-TetraDriverInventory -DriverData @((New-SyntheticDriver -DeviceClass 'System'))));Assert-True($o.Count-eq 0)'Unknown class should not be inferred.'}
+Invoke-Test 'Multiple display devices consolidate into one Analyzer observation' {$a=New-SyntheticDriver -DeviceName 'GPU A' -DeviceID 'A';$b=New-SyntheticDriver -DeviceName 'GPU B' -DeviceID 'B';$o=@(ConvertTo-TetraDriverSystemState -InventoryRecords @(Get-TetraDriverInventory -DriverData @($a,$b)));Assert-True($o.Count-eq 1)'Expected one consolidated observation.'}
+Invoke-Test 'Empty supplied snapshot is valid and produces zero records' {$r=@(Get-TetraDriverInventory -DriverData @());Assert-True($r.Count-eq 0)'Expected empty snapshot.'}
+Invoke-Test 'Driver inventory source contains no mutation commands' {$s=Get-Content -LiteralPath(Join-Path $projectRoot 'Engine\DriverInventoryEngine.ps1')-Raw -Encoding UTF8;$f=@('pnputil.exe /delete-driver','pnputil.exe /add-driver','Disable-PnpDevice','Enable-PnpDevice','Update-PnpDevice','Remove-PnpDevice');foreach($c in $f){Assert-True($s-notmatch[regex]::Escape($c))"Mutation reference '$c' found."}}
+Invoke-Test 'Live Windows driver inventory returns readable records or valid empty snapshot' {$r=@(Get-TetraDriverInventory);foreach($x in $r){Assert-True($x.RecordType-eq'Driver')'Live shape mismatch.';Assert-True($x.EvidenceSource-eq'Win32_PnPSignedDriver')'Live source mismatch.'};Assert-True($r.Count-ge 0)'Invalid count.'}
+$pass=@($results|Where-Object{$_.Passed}).Count;$fail=@($results|Where-Object{-not$_.Passed}).Count
+Write-Host '';Write-Host '===== Tetra Optimizer - Driver Inventory Smoke Tests =====' -ForegroundColor Cyan
+foreach($r in $results){$s=if($r.Passed){'PASS'}else{'FAIL'};$c=if($r.Passed){'Green'}else{'Red'};Write-Host "[$s] $($r.TestName)" -ForegroundColor $c;if(-not$r.Passed){Write-Host "        -> $($r.ErrorMessage)" -ForegroundColor DarkYellow}}
+Write-Host '';Write-Host "PASS: $pass/$($results.Count)";Write-Host "FAIL: $fail/$($results.Count)";Write-Host "Overall: $(if($fail-eq 0){'PASS'}else{'FAIL'})";Write-Host '';if($fail-gt 0){exit 1}
