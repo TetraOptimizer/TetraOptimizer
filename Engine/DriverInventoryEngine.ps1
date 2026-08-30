@@ -48,13 +48,19 @@ function New-TetraDriverInventoryRecord {
     $deviceId=[string](Get-TetraDriverPropertyValue $DriverData 'DeviceID' '')
     $isSigned=$false
     try{$isSigned=[bool](Get-TetraDriverPropertyValue $DriverData 'IsSigned' $false)}catch{}
+    $evidenceKey=''
+    if(-not [string]::IsNullOrWhiteSpace($deviceId)){
+        $evidenceKey=$deviceId
+    } else {
+        $evidenceKey="$deviceClass|$deviceName|$inf"
+    }
     return [PSCustomObject]@{
         RecordType='Driver';Category='Drivers';DeviceName=$deviceName;DeviceClass=$deviceClass
         DriverProvider=$provider;Manufacturer=$manufacturer;DriverVersion=$version
         DriverDate=(ConvertTo-TetraDriverDate (Get-TetraDriverPropertyValue $DriverData 'DriverDate' $null))
         InfName=$inf;DeviceId=$deviceId;IsSigned=$isSigned
         Signer=[string](Get-TetraDriverPropertyValue $DriverData 'Signer' '')
-        EvidenceSource='Win32_PnPSignedDriver';EvidenceKey=(if(-not [string]::IsNullOrWhiteSpace($deviceId)){$deviceId}else{"$deviceClass|$deviceName|$inf"})
+        EvidenceSource='Win32_PnPSignedDriver';EvidenceKey=$evidenceKey
         ObservedUtc=$ObservedUtc
     }
 }
