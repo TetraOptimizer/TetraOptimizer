@@ -95,26 +95,28 @@ function Test-TetraDuplicateSelection {
     $evidence=Get-TetraActionPlanPropertyValue $Recommendation 'Evidence' $null
     $findingEvidence=Get-TetraActionPlanPropertyValue $evidence 'Evidence' $null
     $paths=@(Get-TetraActionPlanPropertyValue $findingEvidence 'Paths' @())
-    if($paths.Count -lt 2){
+    if(@($paths).Count -lt 2){
         return [PSCustomObject]@{IsValid=$false;Reason='Duplicate evidence does not contain at least two exact paths.';KeepPath='';DeletePaths=@()}
     }
     $keep=[string](Get-TetraActionPlanPropertyValue $Selection 'KeepPath' '')
-    $delete=@(Get-TetraActionPlanPropertyValue $Selection 'DeletePaths' @()) | ForEach-Object {[string]$_}
+    # PowerShell 5.1 may unwrap a one-item pipeline to a scalar. Force array
+    # semantics after string conversion so Count/iteration stay deterministic.
+    $delete=@(@(Get-TetraActionPlanPropertyValue $Selection 'DeletePaths' @()) | ForEach-Object {[string]$_})
     if([string]::IsNullOrWhiteSpace($keep)){
         return [PSCustomObject]@{IsValid=$false;Reason='Duplicate selection requires an explicit KeepPath.';KeepPath='';DeletePaths=@()}
     }
-    if($paths -notcontains $keep){
+    if(@($paths) -notcontains $keep){
         return [PSCustomObject]@{IsValid=$false;Reason='KeepPath is not present in the confirmed duplicate evidence paths.';KeepPath=$keep;DeletePaths=@($delete)}
     }
-    if($delete.Count -lt 1){
+    if(@($delete).Count -lt 1){
         return [PSCustomObject]@{IsValid=$false;Reason='Duplicate selection requires at least one explicit DeletePath.';KeepPath=$keep;DeletePaths=@()}
     }
-    foreach($p in $delete){
-        if($paths -notcontains $p){return [PSCustomObject]@{IsValid=$false;Reason="DeletePath '$p' is not present in the confirmed duplicate evidence paths.";KeepPath=$keep;DeletePaths=@($delete)}}
+    foreach($p in @($delete)){
+        if(@($paths) -notcontains $p){return [PSCustomObject]@{IsValid=$false;Reason="DeletePath '$p' is not present in the confirmed duplicate evidence paths.";KeepPath=$keep;DeletePaths=@($delete)}}
         if($p -eq $keep){return [PSCustomObject]@{IsValid=$false;Reason='KeepPath may not also appear in DeletePaths.';KeepPath=$keep;DeletePaths=@($delete)}}
     }
     $uniqueDelete=@($delete | Sort-Object -Unique)
-    return [PSCustomObject]@{IsValid=$true;Reason='Duplicate keep/delete selection is explicit and constrained to confirmed evidence paths.';KeepPath=$keep;DeletePaths=$uniqueDelete}
+    return [PSCustomObject]@{IsValid=$true;Reason='Duplicate keep/delete selection is explicit and constrained to confirmed evidence paths.';KeepPath=$keep;DeletePaths=@($uniqueDelete)}
 }
 
 function ConvertTo-TetraActionPlanItems {
@@ -148,50 +150,31 @@ function ConvertTo-TetraActionPlanItems {
         $state='NeedsReview';$action='None';$target=$path;$reason='Recommendation requires human review before any action can be resolved.';$needsApproval=$false;$backup=$false;$rollback='None';$keep='';$delete=@()
 
         switch($kind){
-            'Keep' {
-                $state='NoAction';$reason='Recommendation is Keep; no system change is planned.'
-            }
-            'DoNotTouch' {
-                $state='Blocked';$reason='Recommendation is DoNotTouch. This item is blocked from execution regardless of approval input.';$userApproved=$false
-            }
-            'Review' {
-                $state='NeedsReview';$reason='Evidence is insufficient for an execution action. Approval alone cannot convert Review into an executable change.';$userApproved=$false
-            }
-            'ProfileRecommendation' {
-                $state='NeedsActionResolution';$needsApproval=$true;$reason='Profile policy recommends a change, but no exact executable action is resolved yet. A future action resolver must define the precise change before approval can make it executable.'
-            }
+            'Keep' {$state='NoAction';$reason='Recommendation is Keep; no system change is planned.'}
+            'DoNotTouch' {$state='Blocked';$reason='Recommendation is DoNotTouch. This item is blocked from execution regardless of approval input.';$userApproved=$false}
+            'Review' {$state='NeedsReview';$reason='Evidence is insufficient for an execution action. Approval alone cannot convert Review into an executable change.';$userApproved=$false}
+            'ProfileRecommendation' {$state='NeedsActionResolution';$needsApproval=$true;$reason='Profile policy recommends a change, but no exact executable action is resolved yet. A future action resolver must define the precise change before approval can make it executable.'}
             'CleanupCandidate' {
                 $needsApproval=$true;$action='CleanupFile';$backup=$true;$rollback='BackupBeforeChange'
-                if([string]::IsNullOrWhiteSpace($path)){
-                    $state='NeedsActionResolution';$reason='Cleanup candidate has no exact target path, so an executable action cannot be prepared.';$userApproved=$false
-                } elseif($userApproved){
-                    $state='ReadyForExecution';$reason='User explicitly approved this exact cleanup candidate. A future execution layer must still perform backup and preflight validation before changing the system.'
-                } else {
-                    $state='AwaitingApproval';$reason='Exact cleanup target is known, but explicit user approval is required before the item can become execution-ready.'
-                }
+                if([string]::IsNullOrWhiteSpace($path)){$state='NeedsActionResolution';$reason='Cleanup candidate has no exact target path, so an executable action cannot be prepared.';$userApproved=$false}
+                elseif($userApproved){$state='ReadyForExecution';$reason='User explicitly approved this exact cleanup candidate. A future execution layer must still perform backup and preflight validation before changing the system.'}
+                else{$state='AwaitingApproval';$reason='Exact cleanup target is known, but explicit user approval is required before the item can become execution-ready.'}
             }
             'DuplicateReview' {
                 $needsApproval=$true;$action='RemoveDuplicateCopies';$backup=$true;$rollback='BackupBeforeChange'
-                if(-not $DuplicateSelections.ContainsKey($id)){
-                    $state='NeedsSelection';$reason='Confirmed duplicates require an explicit KeepPath and explicit DeletePaths before approval can produce an execution-ready plan.';$userApproved=$false
-                } else {
+                if(-not $DuplicateSelections.ContainsKey($id)){$state='NeedsSelection';$reason='Confirmed duplicates require an explicit KeepPath and explicit DeletePaths before approval can produce an execution-ready plan.';$userApproved=$false}
+                else{
                     $selection=Test-TetraDuplicateSelection -Recommendation $r -Selection $DuplicateSelections[$id]
                     $keep=[string]$selection.KeepPath;$delete=@($selection.DeletePaths)
-                    if(-not $selection.IsValid){
-                        $state='NeedsSelection';$reason=[string]$selection.Reason;$userApproved=$false
-                    } elseif($userApproved){
-                        $state='ReadyForExecution';$reason='User explicitly selected the retained copy, selected duplicate copies for removal, and approved the recommendation. A future execution layer must still back up and verify each exact path.'
-                    } else {
-                        $state='AwaitingApproval';$reason='Duplicate keep/delete paths are explicitly resolved, but user approval is still required.'
-                    }
+                    if(-not $selection.IsValid){$state='NeedsSelection';$reason=[string]$selection.Reason;$userApproved=$false}
+                    elseif($userApproved){$state='ReadyForExecution';$reason='User explicitly selected the retained copy, selected duplicate copies for removal, and approved the recommendation. A future execution layer must still back up and verify each exact path.'}
+                    else{$state='AwaitingApproval';$reason='Duplicate keep/delete paths are explicitly resolved, but user approval is still required.'}
                 }
             }
-            default {
-                $state='NeedsReview';$reason="Unknown recommendation state '$kind' is not executable.";$userApproved=$false
-            }
+            default {$state='NeedsReview';$reason="Unknown recommendation state '$kind' is not executable.";$userApproved=$false}
         }
 
-        $items.Add((New-TetraActionPlanItem -RecommendationId $id -Subject $subject -PlanState $state -Reason $reason -Recommendation $kind -ProposedAction $action -Target $target -KnowledgeBaseId $kbId -Confidence $confidence -RequiresUserApproval $needsApproval -UserApproved $userApproved -BackupRequired $backup -RollbackStrategy $rollback -KeepPath $keep -DeletePaths $delete -Evidence $r -PotentialReclaimBytes $reclaim))
+        $items.Add((New-TetraActionPlanItem -RecommendationId $id -Subject $subject -PlanState $state -Reason $reason -Recommendation $kind -ProposedAction $action -Target $target -KnowledgeBaseId $kbId -Confidence $confidence -RequiresUserApproval $needsApproval -UserApproved $userApproved -BackupRequired $backup -RollbackStrategy $rollback -KeepPath $keep -DeletePaths @($delete) -Evidence $r -PotentialReclaimBytes $reclaim))
     }
     return $items.ToArray()
 }
@@ -210,7 +193,7 @@ function Invoke-TetraActionPlan {
     $items=@(ConvertTo-TetraActionPlanItems -RecommendationSnapshot $RecommendationSnapshot -ApprovedRecommendationIds $ApprovedRecommendationIds -DuplicateSelections $DuplicateSelections)
     $completed=(Get-Date).ToUniversalTime()
     $counts=[PSCustomObject]@{
-        Items=$items.Count
+        Items=@($items).Count
         NoAction=@($items|Where-Object{$_.PlanState -eq 'NoAction'}).Count
         Blocked=@($items|Where-Object{$_.PlanState -eq 'Blocked'}).Count
         NeedsReview=@($items|Where-Object{$_.PlanState -eq 'NeedsReview'}).Count
@@ -232,7 +215,7 @@ function Invoke-TetraActionPlan {
         CompletedUtc=$completed.ToString('o')
         DurationMs=[math]::Round(($completed-$started).TotalMilliseconds,2)
         Counts=$counts
-        Items=$items
+        Items=@($items)
         ExecutionPerformed=$false
     }
 }
