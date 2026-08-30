@@ -24,29 +24,40 @@ param()
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# PowerShell 5.1 scope rule: dot-sourcing from inside a function confines loaded
+# functions to that function's local scope. Dependencies therefore must be loaded
+# at this script's top level so collectors/converters remain available when scan
+# functions execute later.
+$Script:TetraSystemScanRequirements = @(
+    [PSCustomObject]@{ Function = 'Get-TetraProcessInventory';              File = 'SystemInventoryEngine.ps1' },
+    [PSCustomObject]@{ Function = 'Get-TetraServiceInventory';              File = 'ServiceInventoryEngine.ps1' },
+    [PSCustomObject]@{ Function = 'Get-TetraStartupInventory';              File = 'StartupInventoryEngine.ps1' },
+    [PSCustomObject]@{ Function = 'Get-TetraInstalledApplicationInventory'; File = 'InstalledApplicationInventoryEngine.ps1' },
+    [PSCustomObject]@{ Function = 'Get-TetraScheduledTaskInventory';        File = 'ScheduledTaskInventoryEngine.ps1' },
+    [PSCustomObject]@{ Function = 'Get-TetraDriverInventory';               File = 'DriverInventoryEngine.ps1' },
+    [PSCustomObject]@{ Function = 'Get-TetraStorageVolumeInventory';        File = 'StorageInventoryEngine.ps1' },
+    [PSCustomObject]@{ Function = 'Get-TetraCleanupInventory';              File = 'CleanupInventoryEngine.ps1' },
+    [PSCustomObject]@{ Function = 'Get-TetraDuplicateInventory';            File = 'DuplicateInventoryEngine.ps1' }
+)
+
+foreach ($requirement in $Script:TetraSystemScanRequirements) {
+    if (Get-Command $requirement.Function -ErrorAction SilentlyContinue) { continue }
+    $dependencyPath = Join-Path $PSScriptRoot $requirement.File
+    if (-not (Test-Path -LiteralPath $dependencyPath -PathType Leaf)) {
+        throw "SystemScanEngine: Required engine '$($requirement.File)' was not found."
+    }
+    . $dependencyPath
+}
+
 function Import-TetraSystemScanDependencies {
     [CmdletBinding()]
     param()
 
-    $requirements = @(
-        [PSCustomObject]@{ Function = 'Get-TetraProcessInventory';              File = 'SystemInventoryEngine.ps1' },
-        [PSCustomObject]@{ Function = 'Get-TetraServiceInventory';              File = 'ServiceInventoryEngine.ps1' },
-        [PSCustomObject]@{ Function = 'Get-TetraStartupInventory';              File = 'StartupInventoryEngine.ps1' },
-        [PSCustomObject]@{ Function = 'Get-TetraInstalledApplicationInventory'; File = 'InstalledApplicationInventoryEngine.ps1' },
-        [PSCustomObject]@{ Function = 'Get-TetraScheduledTaskInventory';        File = 'ScheduledTaskInventoryEngine.ps1' },
-        [PSCustomObject]@{ Function = 'Get-TetraDriverInventory';               File = 'DriverInventoryEngine.ps1' },
-        [PSCustomObject]@{ Function = 'Get-TetraStorageVolumeInventory';        File = 'StorageInventoryEngine.ps1' },
-        [PSCustomObject]@{ Function = 'Get-TetraCleanupInventory';              File = 'CleanupInventoryEngine.ps1' },
-        [PSCustomObject]@{ Function = 'Get-TetraDuplicateInventory';            File = 'DuplicateInventoryEngine.ps1' }
-    )
-
-    foreach ($requirement in $requirements) {
-        if (Get-Command $requirement.Function -ErrorAction SilentlyContinue) { continue }
-        $path = Join-Path $PSScriptRoot $requirement.File
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            throw "Import-TetraSystemScanDependencies: Required engine '$($requirement.File)' was not found."
+    # Validation only. Loading is deliberately done at script scope above.
+    foreach ($requirement in $Script:TetraSystemScanRequirements) {
+        if (-not (Get-Command $requirement.Function -ErrorAction SilentlyContinue)) {
+            throw "Import-TetraSystemScanDependencies: Required function '$($requirement.Function)' is unavailable after dependency loading."
         }
-        . $path
     }
 }
 
@@ -163,22 +174,25 @@ function Invoke-TetraSystemScan {
     $duplicates = @()
 
     if ($fileWorkRequested) {
-        $workingFiles = Invoke-TetraSystemScanCollector -Name 'FileMetadata' -DefaultCollector {
+        $fileCollector = {
             Get-TetraFileInventory -RootPaths $RootPaths -MinimumSizeBytes $MinimumFileSizeBytes -MinimumLargeFileBytes $LargeFileThresholdBytes -MaxFiles $MaxFiles
-        } -CollectorOverrides $CollectorOverrides -Errors $errors
+        }.GetNewClosure()
+        $workingFiles = Invoke-TetraSystemScanCollector -Name 'FileMetadata' -DefaultCollector $fileCollector -CollectorOverrides $CollectorOverrides -Errors $errors
 
         if ($IncludeFileInventory.IsPresent) { $files = @($workingFiles) }
 
         if ($IncludeCleanup.IsPresent) {
-            $cleanup = Invoke-TetraSystemScanCollector -Name 'Cleanup' -DefaultCollector {
+            $cleanupCollector = {
                 Get-TetraCleanupInventory -FileData $workingFiles -MinimumSizeBytes $MinimumFileSizeBytes -MaxFiles $MaxFiles
-            } -CollectorOverrides $CollectorOverrides -Errors $errors
+            }.GetNewClosure()
+            $cleanup = Invoke-TetraSystemScanCollector -Name 'Cleanup' -DefaultCollector $cleanupCollector -CollectorOverrides $CollectorOverrides -Errors $errors
         }
 
         if ($IncludeDuplicates.IsPresent) {
-            $duplicates = Invoke-TetraSystemScanCollector -Name 'Duplicates' -DefaultCollector {
+            $duplicateCollector = {
                 Get-TetraDuplicateInventory -FileData $workingFiles -MinimumSizeBytes $DuplicateMinimumSizeBytes -MaxFiles ([math]::Max(2,$MaxFiles)) -Algorithm $DuplicateHashAlgorithm
-            } -CollectorOverrides $CollectorOverrides -Errors $errors
+            }.GetNewClosure()
+            $duplicates = Invoke-TetraSystemScanCollector -Name 'Duplicates' -DefaultCollector $duplicateCollector -CollectorOverrides $CollectorOverrides -Errors $errors
         }
     }
 
