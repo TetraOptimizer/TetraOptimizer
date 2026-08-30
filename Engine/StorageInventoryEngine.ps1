@@ -31,8 +31,19 @@ function ConvertTo-TetraStorageTimestamp {
     param([AllowNull()][object]$Value)
     if($null -eq $Value){return ''}
     try {
-        if($Value -is [datetime]){return $Value.ToUniversalTime().ToString('o')}
-        return ([datetime]::Parse([string]$Value)).ToUniversalTime().ToString('o')
+        # FileInfo *Utc properties already represent UTC. Synthetic DateTime values
+        # created from date-only literals are Kind=Unspecified; treating those as
+        # local time would shift the calendar date on non-UTC machines. Preserve the
+        # supplied clock value and mark it UTC instead of applying a timezone offset.
+        $dateValue=$null
+        if($Value -is [datetime]){$dateValue=[datetime]$Value}
+        else {$dateValue=[datetime]::Parse([string]$Value,[System.Globalization.CultureInfo]::InvariantCulture,[System.Globalization.DateTimeStyles]::RoundtripKind)}
+        if($dateValue.Kind -eq [System.DateTimeKind]::Unspecified){
+            $dateValue=[datetime]::SpecifyKind($dateValue,[System.DateTimeKind]::Utc)
+        } elseif($dateValue.Kind -eq [System.DateTimeKind]::Local){
+            $dateValue=$dateValue.ToUniversalTime()
+        }
+        return $dateValue.ToString('o')
     } catch { return [string]$Value }
 }
 
