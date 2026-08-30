@@ -116,7 +116,9 @@ function Get-TetraCleanupInventory {
             $records.Add((New-TetraCleanupInventoryRecord -FileData $file -StaleAfterDays $StaleAfterDays -ReferenceUtc $ReferenceUtc -ObservedUtc $utc))
             if($records.Count -ge $MaxFiles){break}
         }
-        if(Get-Command Write-TetraLog -ErrorAction SilentlyContinue){Write-TetraLog -Level 'Info' -Module 'CleanupInventoryEngine' -Action 'Inventory' -Target 'ExplicitRoots' -Result 'Success' -Message "Classified $($records.Count) filesystem metadata record(s) without deleting or modifying files."|Out-Null}
+        if(Get-Command Write-TetraLog -ErrorAction SilentlyContinue){
+            try{Write-TetraLog -Level 'Info' -Module 'CleanupInventoryEngine' -Action 'Inventory' -Target 'ExplicitRoots' -Result 'Success' -Message "Classified $($records.Count) filesystem metadata record(s) without deleting or modifying files."|Out-Null}catch{}
+        }
         return $records.ToArray()
     } catch {throw "Get-TetraCleanupInventory: Failed to collect cleanup inventory - $($_.Exception.Message)"}
 }
