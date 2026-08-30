@@ -492,7 +492,12 @@ function Get-TetraKnowledgeBaseItems {
 
         $filePath   = Get-TetraKnowledgeBaseFilePath -Category $Category
         $rawContent = Get-Content -LiteralPath $filePath -Raw -Encoding UTF8
-        $items      = @($rawContent | ConvertFrom-Json)
+        $parsedItems = ConvertFrom-Json -InputObject $rawContent
+        $items = [System.Collections.Generic.List[PSCustomObject]]::new()
+        foreach ($item in $parsedItems) {
+            $items.Add($item)
+        }
+        $items = $items.ToArray()
 
         $Script:TetraKnowledgeBaseCache[$Category] = $items
         return $items
