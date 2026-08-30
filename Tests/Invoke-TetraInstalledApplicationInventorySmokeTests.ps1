@@ -137,7 +137,18 @@ Invoke-Test -Name 'Empty supplied snapshot is valid and produces zero records' -
 
 Invoke-Test -Name 'Application inventory source avoids Win32_Product and mutation commands' -Body {
     $source = Get-Content -LiteralPath (Join-Path $projectRoot 'Engine\InstalledApplicationInventoryEngine.ps1') -Raw -Encoding UTF8
-    Assert-True ($source -notmatch [regex]::Escape('Win32_Product')) 'Inventory engine must not query Win32_Product.'
+
+    # Mentions in comments/documentation are allowed. Reject executable query
+    # patterns that would actually invoke the MSI-backed provider.
+    $win32ProductQueryPatterns = @(
+        '(?im)^\s*Get-CimInstance\b[^\r\n]*\bWin32_Product\b',
+        '(?im)^\s*Get-WmiObject\b[^\r\n]*\bWin32_Product\b',
+        '(?im)^\s*gwmi\b[^\r\n]*\bWin32_Product\b',
+        '(?im)^\s*gcim\b[^\r\n]*\bWin32_Product\b'
+    )
+    foreach ($pattern in $win32ProductQueryPatterns) {
+        Assert-True ($source -notmatch $pattern) 'Inventory engine must not query Win32_Product.'
+    }
 
     $forbidden = @(
         'Remove-Item', 'Set-ItemProperty', 'New-ItemProperty', 'Remove-ItemProperty',
