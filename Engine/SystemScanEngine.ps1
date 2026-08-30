@@ -56,7 +56,7 @@ function Invoke-TetraSystemScanCollector {
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][scriptblock]$DefaultCollector,
         [Parameter(Mandatory = $true)][hashtable]$CollectorOverrides,
-        [Parameter(Mandatory = $true)][System.Collections.Generic.List[PSCustomObject]]$Errors
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[PSCustomObject]]$Errors
     )
 
     try {
@@ -87,7 +87,7 @@ function ConvertTo-TetraSystemScanAnalyzerState {
         [AllowEmptyCollection()][object[]]$Services = @(),
         [AllowEmptyCollection()][object[]]$Startup = @(),
         [AllowEmptyCollection()][object[]]$Drivers = @(),
-        [Parameter(Mandatory = $true)][System.Collections.Generic.List[PSCustomObject]]$Errors
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[PSCustomObject]]$Errors
     )
 
     $observations = [System.Collections.Generic.List[PSCustomObject]]::new()
@@ -189,19 +189,19 @@ function Invoke-TetraSystemScan {
     if ($errors.Count -gt 0) { $status = 'Partial' }
 
     $counts = [PSCustomObject]@{
-        Processes           = @($processes).Count
-        Services            = @($services).Count
-        Startup             = @($startup).Count
-        Applications        = @($applications).Count
-        ScheduledTasks      = @($scheduledTasks).Count
-        Drivers             = @($drivers).Count
-        StorageVolumes      = @($storageVolumes).Count
-        Files               = @($files).Count
-        CleanupCandidates   = @($cleanup | Where-Object { $_.IsCleanupCandidate -eq $true }).Count
-        CleanupRecords      = @($cleanup).Count
-        DuplicateGroups     = @($duplicates).Count
+        Processes            = @($processes).Count
+        Services             = @($services).Count
+        Startup              = @($startup).Count
+        Applications         = @($applications).Count
+        ScheduledTasks       = @($scheduledTasks).Count
+        Drivers              = @($drivers).Count
+        StorageVolumes       = @($storageVolumes).Count
+        Files                = @($files).Count
+        CleanupCandidates    = @($cleanup | Where-Object { $_.IsCleanupCandidate -eq $true }).Count
+        CleanupRecords       = @($cleanup).Count
+        DuplicateGroups      = @($duplicates).Count
         AnalyzerObservations = @($analyzerState).Count
-        Errors              = $errors.Count
+        Errors               = $errors.Count
     }
 
     $potentialDuplicateReclaim = 0L
