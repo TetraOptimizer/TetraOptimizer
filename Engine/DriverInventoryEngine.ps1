@@ -28,11 +28,11 @@ function ConvertTo-TetraDriverDate {
     param([AllowNull()][object]$Value)
     if($null -eq $Value){return ''}
     try {
-        if($Value -is [datetime]){return $Value.ToUniversalTime().ToString('o')}
+        if($Value -is [datetime]){return $Value.ToString('yyyy-MM-dd')}
         $text=([string]$Value).Trim()
         if([string]::IsNullOrWhiteSpace($text)){return ''}
         $parsed=[datetime]::Parse($text)
-        return $parsed.ToUniversalTime().ToString('o')
+        return $parsed.ToString('yyyy-MM-dd')
     } catch { return [string]$Value }
 }
 
@@ -109,8 +109,8 @@ function ConvertTo-TetraDriverSystemState {
     $out=[System.Collections.Generic.List[PSCustomObject]]::new()
     foreach($id in $groups.Keys){
         $g=$groups[$id];$versions=@($g|ForEach-Object{$_.DriverVersion}|Where-Object{-not [string]::IsNullOrWhiteSpace($_)}|Select-Object -Unique)
-        $state="Observed; Devices=$($g.Count); Versions=$($versions -join ',')"
-        $out.Add((New-TetraSystemStateObservation -Category 'Drivers' -KnowledgeBaseId $id -IsInstalled $true -IsActive $true -CurrentState $state -EvidenceSource 'Win32_PnPSignedDriver'))
+        $state="Observed via Win32_PnPSignedDriver; Devices=$($g.Count); Versions=$($versions -join ',')"
+        $out.Add((New-TetraSystemStateObservation -Category 'Drivers' -KnowledgeBaseId $id -IsInstalled $true -IsActive $true -CurrentState $state))
     }
     return $out.ToArray()
 }
