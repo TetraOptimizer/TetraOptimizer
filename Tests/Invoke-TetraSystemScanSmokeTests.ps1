@@ -99,7 +99,7 @@ Invoke-Test 'Known service evidence is prepared for Analyzer handoff' {
     $o=New-EmptyOverrides
     $o.Services={ [PSCustomObject]@{RecordType='Service';Category='Services';Name='WSearch';DisplayName='Windows Search';State='Running';Status='OK';StartMode='Auto';ProcessId=123;BinaryPath='';PathAvailable=$false;ServiceType='Own Process';Description='';EvidenceSource='Win32_Service';EvidenceKey='WSearch';ObservedUtc='2026-08-30T00:00:00Z'} }
     $s=Invoke-TetraSystemScan -CollectorOverrides $o
-    $matches=@($s.AnalyzerState|Where-Object{$_.KnowledgeBaseId -eq 'service-windows-search'})
+    $matches=@($s.AnalyzerState|Where-Object{$_.KnowledgeBaseId -eq 'svc-wsearch'})
     Assert-True ($matches.Count -eq 1) 'Expected WSearch Analyzer observation.'
     Assert-True ($matches[0].IsInstalled -eq $true) 'Observation should report installed.'
 }
