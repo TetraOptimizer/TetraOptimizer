@@ -5,9 +5,11 @@
 .DESCRIPTION
     Official thin production entry point for Tetra Optimizer.
 
-    Tetra.ps1 validates the Windows/PowerShell environment and delegates the
-    complete Scan -> Analyze -> Recommend -> Approval -> Execute -> Verify ->
-    Report lifecycle to PipelineEngine. Preview is the default and is read-only.
+    Tetra.ps1 validates the Windows/PowerShell environment, initializes the
+    dependency-safe Tetra foundation, and delegates the complete
+    Scan -> Analyze -> Recommend -> Approval -> Execute -> Verify -> Report
+    lifecycle to PipelineEngine. Preview is the default and is read-only with
+    respect to Windows/system state.
 
     No system mutation is implemented in this file. Mutation-capable execution
     requires -Execute plus an explicit ApprovalProvider and remains governed by
@@ -110,6 +112,15 @@ $environment=Test-TetraProductionEnvironment
 if(-not $environment.IsValid){
     throw "Tetra: Unsupported runtime environment. Windows=$($environment.IsWindows); PowerShell=$($environment.PowerShellVersion)."
 }
+
+# Production requires the validated foundation load order (Config, Logger,
+# Knowledge Base, Analyzer, etc.). Tetra.ps1 remains the public entry point;
+# Bootstrap is used only as the internal dependency loader/initializer.
+$bootstrapPath=Join-Path $root 'Bootstrap\Initialize-Tetra.ps1'
+if(-not(Test-Path -LiteralPath $bootstrapPath -PathType Leaf)){
+    throw "Tetra: Foundation bootstrap was not found at '$bootstrapPath'."
+}
+. $bootstrapPath
 
 $pipelinePath=Join-Path $root 'Engine\PipelineEngine.ps1'
 if(-not(Test-Path -LiteralPath $pipelinePath -PathType Leaf)){
