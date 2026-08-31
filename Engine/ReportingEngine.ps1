@@ -79,6 +79,7 @@ function New-TetraClientReport {
     $recommendations=Get-TetraReportPropertyValue $PipelineSnapshot 'Recommendations' $null
     $plan=Get-TetraReportPropertyValue $PipelineSnapshot 'ActionPlan' $null
     $execution=Get-TetraReportPropertyValue $PipelineSnapshot 'Execution' $null
+    $executeRequested=[bool](Get-TetraReportPropertyValue $PipelineSnapshot 'ExecuteRequested' $false)
     $findings=@(ConvertTo-TetraReportArray (Get-TetraReportPropertyValue $analysis 'Findings' @()) | ForEach-Object {New-TetraReportFindingEntry $_})
     $recs=@(ConvertTo-TetraReportArray (Get-TetraReportPropertyValue $recommendations 'Recommendations' @()) | ForEach-Object {New-TetraReportRecommendationEntry $_})
     $planItems=@(ConvertTo-TetraReportArray (Get-TetraReportPropertyValue $plan 'Items' @()))
@@ -91,7 +92,8 @@ function New-TetraClientReport {
     $duplicates=@($executed | Where-Object {$_.Action -eq 'RemoveDuplicateCopies'} | ForEach-Object {$d=[PSCustomObject]@{Subject=$_.Subject;KeepPath=$_.KeepPath;DeletedPaths=$null;BytesReclaimed=$_.BytesReclaimed;Verified=$_.Verified};$d.DeletedPaths=[string[]]@($_.DeletedPaths);$d})
     $untouched=@($planItems | Where-Object {[string](Get-TetraReportPropertyValue $_ 'PlanState' '') -in @('NoAction','Blocked')} | ForEach-Object {[PSCustomObject]@{Subject=[string](Get-TetraReportPropertyValue $_ 'Subject' '');PlanState=[string](Get-TetraReportPropertyValue $_ 'PlanState' '');Reason=[string](Get-TetraReportPropertyValue $_ 'Reason' '');ProposedAction=[string](Get-TetraReportPropertyValue $_ 'ProposedAction' '')}})
     $unresolved=@($planItems | Where-Object {[string](Get-TetraReportPropertyValue $_ 'PlanState' '') -in @('Review','AwaitingApproval','NeedsResolution')} | ForEach-Object {[PSCustomObject]@{Subject=[string](Get-TetraReportPropertyValue $_ 'Subject' '');PlanState=[string](Get-TetraReportPropertyValue $_ 'PlanState' '');Reason=[string](Get-TetraReportPropertyValue $_ 'Reason' '');ProposedAction=[string](Get-TetraReportPropertyValue $_ 'ProposedAction' '')}})
-    $failedExecution=@($executionEntries | Where-Object {$_.State -in @('PreflightFailed','ExecutionFailed','RolledBack','RollbackFailed','Blocked')})
+    $executionIssueStates=if($executeRequested){@('PreflightFailed','ExecutionFailed','RolledBack','RollbackFailed','Blocked')}else{@()}
+    $failedExecution=@($executionEntries | Where-Object {$executionIssueStates -contains $_.State})
     $inventory=[ordered]@{}
     foreach($name in @('Processes','Services','Startup','Applications','ScheduledTasks','Drivers','StorageVolumes','Files','Cleanup','Duplicates')){$inventory[$name]=@(ConvertTo-TetraReportArray (Get-TetraReportPropertyValue $scan $name @())).Count}
     $before=[PSCustomObject]@{SourceScanId=[string](Get-TetraReportPropertyValue $scan 'ScanId' '');ScanStatus=[string](Get-TetraReportPropertyValue $scan 'Status' 'Unavailable');InventoryCounts=[PSCustomObject]$inventory;Findings=$findings}
