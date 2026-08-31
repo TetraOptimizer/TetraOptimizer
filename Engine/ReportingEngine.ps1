@@ -25,8 +25,8 @@ function Get-TetraReportPropertyValue {
 
 function ConvertTo-TetraReportArray {
     param([object]$Value)
-    if($null -eq $Value){return @()}
-    return @($Value)
+    if($null -eq $Value){return ,@()}
+    return ,@($Value)
 }
 
 function New-TetraReportExecutionEntry {
@@ -34,13 +34,21 @@ function New-TetraReportExecutionEntry {
     $planId=[string](Get-TetraReportPropertyValue $Result 'PlanItemId' '')
     $plan=if($PlanById.ContainsKey($planId)){$PlanById[$planId]}else{$null}
     $preflight=Get-TetraReportPropertyValue $Result 'Preflight' $null
-    $targets=@(ConvertTo-TetraReportArray (Get-TetraReportPropertyValue $preflight 'Targets' @()) | ForEach-Object {[string]$_})
+    [string[]]$targets=@(ConvertTo-TetraReportArray (Get-TetraReportPropertyValue $preflight 'Targets' @()) | ForEach-Object {[string]$_})
     $keep=[string](Get-TetraReportPropertyValue $preflight 'KeepPath' '')
     if($targets.Count -eq 0 -and $null -ne $plan){
         $action=[string](Get-TetraReportPropertyValue $plan 'ProposedAction' '')
-        if($action -eq 'CleanupFile'){$target=[string](Get-TetraReportPropertyValue $plan 'Target' '');if($target){$targets=@($target)}}
-        elseif($action -eq 'RemoveDuplicateCopies'){$targets=@(ConvertTo-TetraReportArray (Get-TetraReportPropertyValue $plan 'DeletePaths' @()) | ForEach-Object {[string]$_});$keep=[string](Get-TetraReportPropertyValue $plan 'KeepPath' '')}
+        if($action -eq 'CleanupFile'){
+            $target=[string](Get-TetraReportPropertyValue $plan 'Target' '')
+            if($target){[string[]]$targets=@($target)}
+        }
+        elseif($action -eq 'RemoveDuplicateCopies'){
+            [string[]]$targets=@(ConvertTo-TetraReportArray (Get-TetraReportPropertyValue $plan 'DeletePaths' @()) | ForEach-Object {[string]$_})
+            $keep=[string](Get-TetraReportPropertyValue $plan 'KeepPath' '')
+        }
     }
+    [string[]]$deletedPaths=@()
+    if([string](Get-TetraReportPropertyValue $Result 'State' '') -eq 'ExecutedVerified'){$deletedPaths=@($targets)}
     return [PSCustomObject]@{
         PlanItemId=$planId
         RecommendationId=[string](Get-TetraReportPropertyValue $Result 'RecommendationId' '')
@@ -49,7 +57,7 @@ function New-TetraReportExecutionEntry {
         State=[string](Get-TetraReportPropertyValue $Result 'State' '')
         Verified=[bool](Get-TetraReportPropertyValue $Result 'Verified' $false)
         BytesReclaimed=[long](Get-TetraReportPropertyValue $Result 'BytesReclaimed' 0)
-        DeletedPaths=if([string](Get-TetraReportPropertyValue $Result 'State' '') -eq 'ExecutedVerified'){@($targets)}else{@()}
+        DeletedPaths=$deletedPaths
         KeepPath=$keep
         BackupCreated=[bool](Get-TetraReportPropertyValue $Result 'BackupCreated' $false)
         BackupId=[string](Get-TetraReportPropertyValue $Result 'BackupId' '')
@@ -103,7 +111,10 @@ function New-TetraClientReport {
 
     $reclaimed=0L;foreach($e in $executionEntries){if($e.State -eq 'ExecutedVerified'){$reclaimed+=[long]$e.BytesReclaimed}}
     $executed=@($executionEntries|Where-Object{$_.State -eq 'ExecutedVerified'})
-    $duplicates=@($executed|Where-Object{$_.Action -eq 'RemoveDuplicateCopies'}|ForEach-Object {[PSCustomObject]@{Subject=$_.Subject;KeepPath=$_.KeepPath;DeletedPaths=@($_.DeletedPaths);BytesReclaimed=$_.BytesReclaimed;Verified=$_.Verified}})
+    $duplicates=@($executed|Where-Object{$_.Action -eq 'RemoveDuplicateCopies'}|ForEach-Object {
+        [string[]]$deleted=@($_.DeletedPaths)
+        [PSCustomObject]@{Subject=$_.Subject;KeepPath=$_.KeepPath;DeletedPaths=$deleted;BytesReclaimed=$_.BytesReclaimed;Verified=$_.Verified}
+    })
     $untouched=@($planItems|Where-Object{[string](Get-TetraReportPropertyValue $_ 'PlanState' '') -in @('NoAction','Blocked')}|ForEach-Object {[PSCustomObject]@{Subject=[string](Get-TetraReportPropertyValue $_ 'Subject' '');PlanState=[string](Get-TetraReportPropertyValue $_ 'PlanState' '');Reason=[string](Get-TetraReportPropertyValue $_ 'Reason' '');ProposedAction=[string](Get-TetraReportPropertyValue $_ 'ProposedAction' '')}})
     $unresolved=@($planItems|Where-Object{[string](Get-TetraReportPropertyValue $_ 'PlanState' '') -in @('Review','AwaitingApproval','NeedsResolution')}|ForEach-Object {[PSCustomObject]@{Subject=[string](Get-TetraReportPropertyValue $_ 'Subject' '');PlanState=[string](Get-TetraReportPropertyValue $_ 'PlanState' '');Reason=[string](Get-TetraReportPropertyValue $_ 'Reason' '');ProposedAction=[string](Get-TetraReportPropertyValue $_ 'ProposedAction' '')}})
     $failedExecution=@($executionEntries|Where-Object{$_.State -in @('PreflightFailed','ExecutionFailed','RolledBack','RollbackFailed','Blocked')})
