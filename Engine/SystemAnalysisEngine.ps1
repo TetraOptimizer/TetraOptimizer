@@ -136,15 +136,15 @@ function Invoke-TetraSystemAnalysis {
     if([string](Get-TetraAnalysisPropertyValue $Snapshot 'RecordType' '') -ne 'SystemScanSnapshot'){
         throw 'Invoke-TetraSystemAnalysis: Snapshot must be a SystemScanSnapshot.'
     }
-    if(-not (Get-Command Invoke-TetraAnalysis -ErrorAction SilentlyContinue)){
-        throw 'Invoke-TetraSystemAnalysis: AnalyzerEngine is not loaded; Invoke-TetraAnalysis is unavailable.'
-    }
 
     $started=(Get-Date).ToUniversalTime()
     $errors=[System.Collections.Generic.List[PSCustomObject]]::new()
     $state=@(Get-TetraAnalysisPropertyValue $Snapshot 'AnalyzerState' @())
     $policy=@()
     if($state.Count -gt 0){
+        if(-not (Get-Command Invoke-TetraAnalysis -ErrorAction SilentlyContinue)){
+            throw 'Invoke-TetraSystemAnalysis: AnalyzerEngine is not loaded; Invoke-TetraAnalysis is unavailable for non-empty AnalyzerState evidence.'
+        }
         $categories=@($state | ForEach-Object {[string]$_.Category} | Where-Object {-not [string]::IsNullOrWhiteSpace($_)} | Sort-Object -Unique)
         if($categories.Count -gt 0){
             try{$policy=@(Invoke-TetraAnalysis -Profile $Profile -SystemState $state -Categories $categories)}
