@@ -171,7 +171,7 @@ function Get-TetraKnowledgeBaseFilePath {
 .SYNOPSIS
     Ensures the Data folder exists on disk.
 .OUTPUTS
-    System.String - the Data directory path.
+    System.String - the (now guaranteed to exist) Data directory path.
 #>
 function Initialize-TetraKnowledgeBaseDirectory {
     [CmdletBinding(SupportsShouldProcess = $true)]
