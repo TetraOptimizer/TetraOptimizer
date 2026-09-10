@@ -8,6 +8,7 @@ $tests = @(
     [PSCustomObject]@{ File='Invoke-TetraActionPlanSmokeTests.ps1'; ExpectedTests=17 },
     [PSCustomObject]@{ File='Invoke-TetraExecutionSmokeTests.ps1'; ExpectedTests=19 },
     [PSCustomObject]@{ File='Invoke-TetraDuplicateExecutionSafetyTests.ps1'; ExpectedTests=24 },
+    [PSCustomObject]@{ File='Invoke-TetraExecutionBackupIntegrationTests.ps1'; ExpectedTests=8 },
     [PSCustomObject]@{ File='Invoke-TetraPipelineSmokeTests.ps1'; ExpectedTests=17 },
     [PSCustomObject]@{ File='Invoke-TetraReportingSmokeTests.ps1'; ExpectedTests=12 },
     [PSCustomObject]@{ File='Invoke-TetraPostExecutionVerificationSmokeTests.ps1'; ExpectedTests=14 },
