@@ -12,6 +12,7 @@
       2. Every item is revalidated by a read-only preflight.
       3. Only CleanupFile and RemoveDuplicateCopies are supported in V1.
       4. Exact target paths must exist as files at execution time.
+         V1 rejects redirected paths (reparse points), including parent folders.
       5. Duplicate paths, size and hash are revalidated against scan evidence,
          including after backup and immediately before each deletion.
       6. A backup is mandatory before any delete operation.
@@ -54,6 +55,33 @@ function Test-TetraExecutionPathExists {
     return [bool](Test-Path -LiteralPath $Path -PathType Leaf)
 }
 
+function Assert-TetraExecutionPathSafe {
+    [CmdletBinding()][OutputType([string])]
+    param([Parameter(Mandatory=$true)][string]$Path)
+    # Pin local filesystem paths instead of letting a later location/provider
+    # change reinterpret a relative path. Network/device paths and ADS are not V1.
+    if($Path -notmatch '\A[A-Za-z]:[\\/]' -or $Path.Substring(2).Contains(':')){
+        throw "Execution requires an absolute local file path without alternate streams: '$Path'."
+    }
+    $canonical=[IO.Path]::GetFullPath($Path)
+    $root=[IO.Path]::GetPathRoot($canonical)
+    $current=$root
+    $components=@('')+@($canonical.Substring($root.Length).Split([char]'\') | Where-Object {$_ -ne ''})
+    foreach($component in $components){
+        if($component -ne ''){$current=Join-Path $current $component}
+        try{$entry=Get-Item -LiteralPath $current -Force -ErrorAction Stop}
+        catch [System.Management.Automation.ItemNotFoundException]{
+            # Missing components cannot currently redirect. Existence is checked
+            # separately; rollback may legitimately need to recreate a file.
+            break
+        }
+        if($entry.Attributes -band [IO.FileAttributes]::ReparsePoint){
+            throw "Execution refuses a redirected path (reparse point): '$current'."
+        }
+    }
+    return $canonical
+}
+
 function Test-TetraExecutionDuplicateContent {
     [CmdletBinding()][OutputType([PSCustomObject])]
     param([object]$Evidence,[Parameter(Mandatory=$true)][string[]]$Paths)
@@ -70,7 +98,8 @@ function Test-TetraExecutionDuplicateContent {
         foreach($path in $Paths){
             $stream=$null;$hasher=$null
             try{
-                $file=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+                $safePath=Assert-TetraExecutionPathSafe -Path $path
+                $file=Get-Item -LiteralPath $safePath -Force -ErrorAction Stop
                 if($file -isnot [System.IO.FileInfo]){throw 'Target is not a filesystem file.'}
                 # One read handle supplies both length and hash. Disallow writes
                 # and deletes while hashing; this is not a lock through deletion.
@@ -113,7 +142,10 @@ function Test-TetraExecutionPreflight {
         $target=[string](Get-TetraExecutionPropertyValue $PlanItem 'Target' '')
         if([string]::IsNullOrWhiteSpace($target)){$errors.Add('CleanupFile requires an exact Target path.')}
         elseif(-not (Test-TetraExecutionPathExists -Path $target -PathExistsProvider $PathExistsProvider)){$errors.Add("Cleanup target does not exist as a file: $target")}
-        else{$targets.Add($target)}
+        else{
+            try{$targets.Add((Assert-TetraExecutionPathSafe -Path $target))}
+            catch{$errors.Add($_.Exception.Message)}
+        }
     }
     elseif($action -eq 'RemoveDuplicateCopies'){
         $keep=[string](Get-TetraExecutionPropertyValue $PlanItem 'KeepPath' '')
@@ -132,6 +164,19 @@ function Test-TetraExecutionPreflight {
             $targets.Add($p)
         }
         if(@($evidencePaths).Count -lt 2){$errors.Add('Confirmed duplicate evidence contains fewer than two paths.')}
+        if($errors.Count -eq 0){
+            try{
+                $canonicalKeep=Assert-TetraExecutionPathSafe -Path $keep
+                $canonicalTargets=[System.Collections.Generic.List[string]]::new()
+                foreach($path in $targets){
+                    $canonicalTarget=Assert-TetraExecutionPathSafe -Path $path
+                    if($canonicalTarget -eq $canonicalKeep){throw 'DeletePath resolves to KeepPath.'}
+                    if($canonicalTargets -contains $canonicalTarget){throw 'More than one DeletePath resolves to the same path.'}
+                    $canonicalTargets.Add($canonicalTarget)
+                }
+                $keep=$canonicalKeep;$targets=$canonicalTargets
+            }catch{$errors.Add($_.Exception.Message)}
+        }
         if($errors.Count -eq 0){
             $recommendation=Get-TetraExecutionPropertyValue $PlanItem 'Evidence' $null
             $finding=Get-TetraExecutionPropertyValue $recommendation 'Evidence' $null
@@ -231,6 +276,7 @@ function Invoke-TetraExecution {
                 if(-not $content.IsValid){throw ($content.Errors -join ' | ')}
             }
             foreach($path in @($preflight.Targets)){
+                $null=Assert-TetraExecutionPathSafe -Path $path
                 if($preflight.ProposedAction -eq 'RemoveDuplicateCopies'){
                     # Recheck this pair between deletes without repeatedly hashing
                     # all remaining copies or revisiting already-deleted targets.
@@ -248,7 +294,7 @@ function Invoke-TetraExecution {
         if($mutationFailed -and -not $deleteAttempted){
             # A changed file belongs to the user: do not overwrite it by rolling
             # back when this engine has not attempted any deletion.
-            $results.Add((New-TetraExecutionResult -Item $item -State 'PreflightFailed' -Message "Post-backup content check failed; zero deletion was attempted. $failureMessage" -Preflight $preflight -BackupId $backupId -BackupCreated $true));continue
+            $results.Add((New-TetraExecutionResult -Item $item -State 'PreflightFailed' -Message "Post-backup safety check failed; zero deletion was attempted. $failureMessage" -Preflight $preflight -BackupId $backupId -BackupCreated $true));continue
         }
 
         if(-not $mutationFailed){
@@ -258,6 +304,8 @@ function Invoke-TetraExecution {
 
         $rollbackOk=$false;$rollbackMessage=''
         try{
+            # Do not restore through a newly redirected deletion target either.
+            foreach($path in @($preflight.Targets)){$null=Assert-TetraExecutionPathSafe -Path $path}
             if($null -ne $RollbackProvider){$rb=& $RollbackProvider $backupId $item;$rollbackOk=[bool](Get-TetraExecutionPropertyValue $rb 'Success' $false)}
             else{
                 if(-not (Get-Command Restore-TetraBackup -ErrorAction SilentlyContinue)){throw 'Restore-TetraBackup is unavailable.'}
