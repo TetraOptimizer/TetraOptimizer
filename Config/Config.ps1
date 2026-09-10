@@ -22,10 +22,9 @@
                                      Save-TetraConfig / Set-TetraConfigValue /
                                      Reset-TetraConfig calls).
         Config/DefaultConfig.json - Reference copy of the in-code defaults.
-                                     Regenerated every Initialize-TetraConfig
-                                     call. Safe to overwrite - it is never the
-                                     live configuration, only a reset/diff
-                                     reference.
+                                     Created only when missing. An existing
+                                     file is preserved, including local edits.
+                                     Live settings remain in Config.json.
 
     DEPENDENCIES:
         Config/PathHelpers.ps1 (added during Foundation Validation - provides
@@ -336,8 +335,9 @@ function Merge-TetraConfigSchema {
 .DESCRIPTION
     Idempotent. Safe to call on every Tetra Optimizer launch.
 
-    - DefaultConfig.json is ALWAYS (re)written from the current in-code
-      defaults, since it is a pure reference file, not user data.
+    - DefaultConfig.json is created from the in-code defaults only when
+      missing. Existing contents are preserved, including local edits,
+      even when -Force is specified.
     - Config.json is created from defaults ONLY if it does not already exist,
       or if -Force is specified. An existing Config.json is otherwise left
       untouched by this function (schema healing happens in Get-TetraConfig).
@@ -361,7 +361,8 @@ function Initialize-TetraConfig {
         $defaultConfigPath = Get-TetraDefaultConfigFilePath
         $defaultConfig     = Get-TetraDefaultConfig
 
-        if ($PSCmdlet.ShouldProcess($defaultConfigPath, 'Write reference default configuration')) {
+        $defaultConfigMissing = -not (Test-Path -LiteralPath $defaultConfigPath)
+        if ($defaultConfigMissing -and $PSCmdlet.ShouldProcess($defaultConfigPath, 'Create reference default configuration')) {
             $defaultConfig | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $defaultConfigPath -Encoding UTF8
         }
 
