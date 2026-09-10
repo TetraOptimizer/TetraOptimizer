@@ -6,18 +6,26 @@ $projectRoot=Split-Path $PSScriptRoot -Parent
 . (Join-Path $projectRoot 'Bootstrap\Initialize-Tetra.ps1')
 . (Join-Path $projectRoot 'Engine\ActionPlanEngine.ps1')
 . (Join-Path $projectRoot 'Engine\ExecutionEngine.ps1')
+. (Join-Path $projectRoot 'Engine\DuplicateInventoryEngine.ps1')
 
 $results=[System.Collections.Generic.List[PSCustomObject]]::new()
 function Assert-True{param([bool]$Condition,[string]$Message)if(-not $Condition){throw $Message}}
 function Invoke-Test{param([string]$Name,[scriptblock]$Body)try{& $Body|Out-Null;$results.Add([PSCustomObject]@{TestName=$Name;Passed=$true;ErrorMessage=''})}catch{$results.Add([PSCustomObject]@{TestName=$Name;Passed=$false;ErrorMessage=$_.Exception.Message})}}
 
 function New-ExecutionTestItem{
- param([string]$Id='rec-1',[string]$State='ReadyForExecution',[string]$Action='CleanupFile',[string]$Target='C:\Synthetic\temp.tmp',[bool]$Approved=$true,[bool]$BackupRequired=$true,[string]$KeepPath='',[string[]]$DeletePaths=@(),[string[]]$EvidencePaths=@())
- $dup=[PSCustomObject]@{Paths=@($EvidencePaths)};$finding=[PSCustomObject]@{Evidence=$dup};$recommendation=[PSCustomObject]@{Evidence=$finding}
+ param([string]$Id='rec-1',[string]$State='ReadyForExecution',[string]$Action='CleanupFile',[string]$Target='C:\Synthetic\temp.tmp',[bool]$Approved=$true,[bool]$BackupRequired=$true,[string]$KeepPath='',[string[]]$DeletePaths=@(),[string[]]$EvidencePaths=@(),[object]$DuplicateEvidence=$null)
+ $dup=if($null -ne $DuplicateEvidence){$DuplicateEvidence}else{[PSCustomObject]@{Paths=@($EvidencePaths)}};$finding=[PSCustomObject]@{Evidence=$dup};$recommendation=[PSCustomObject]@{Evidence=$finding}
  return [PSCustomObject]@{RecordType='ActionPlanItem';PlanItemId="plan-$Id";RecommendationId=$Id;Subject=$Id;PlanState=$State;ProposedAction=$Action;Target=$Target;KnowledgeBaseId='';Confidence='High';RequiresUserApproval=$true;UserApproved=$Approved;BackupRequired=$BackupRequired;RollbackStrategy='BackupBeforeChange';KeepPath=$KeepPath;DeletePaths=@($DeletePaths);PotentialReclaimBytes=1234;ExecutionReady=($State -eq 'ReadyForExecution');ExecutionRequested=$false;Executed=$false;Evidence=$recommendation}
 }
 function New-ExecutionTestPlan{param([object[]]$Items=@())return [PSCustomObject]@{RecordType='ActionPlanSnapshot';ActionPlanId='plan-run';ExecutionPerformed=$false;Items=@($Items)}}
 function New-FakeBackup{param([string]$Id='backup-test')return [PSCustomObject]@{Success=$true;BackupId=$Id}}
+function Remove-ExecutionTestDirectory {
+ param([string]$Path)
+ $full=[IO.Path]::GetFullPath($Path)
+ $temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
+ if((Split-Path $full -Parent) -ne $temp -or (Split-Path $full -Leaf) -notmatch '\ATetra(?:Dup)?Exec_[0-9a-f]{32}\z'){throw 'Refusing cleanup outside an execution test directory.'}
+ Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction Stop
+}
 
 Invoke-Test 'Execution state contract is complete' {
  $s=@(Get-TetraExecutionStates);foreach($x in @('Preview','Blocked','PreflightFailed','WhatIf','ExecutedVerified','ExecutionFailed','RolledBack','RollbackFailed')){Assert-True ($s -contains $x) "Missing state $x."}
@@ -52,11 +60,17 @@ Invoke-Test 'Backup failure prevents every delete attempt' {
 }
 Invoke-Test 'Successful cleanup executes only after backup and verifies absence' {
  $root=Join-Path ([IO.Path]::GetTempPath()) ("TetraExec_"+[guid]::NewGuid().ToString('N'));New-Item -ItemType Directory -Path $root|Out-Null;$file=Join-Path $root 'cache.tmp';Set-Content -LiteralPath $file -Value 'x'
- try{$i=New-ExecutionTestItem -Target $file;$r=Invoke-TetraExecution -ActionPlan (New-ExecutionTestPlan @($i)) -Execute -Confirm:$false -BackupProvider {param($p,$x)New-FakeBackup};Assert-True ($r.Results[0].State -eq 'ExecutedVerified') 'Cleanup should verify.';Assert-True (-not(Test-Path -LiteralPath $file)) 'File should be deleted.';Assert-True $r.Results[0].BackupCreated 'Backup must be recorded.'}finally{Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue}
+ try{$i=New-ExecutionTestItem -Target $file;$r=Invoke-TetraExecution -ActionPlan (New-ExecutionTestPlan @($i)) -Execute -Confirm:$false -BackupProvider {param($p,$x)New-FakeBackup};Assert-True ($r.Results[0].State -eq 'ExecutedVerified') 'Cleanup should verify.';Assert-True (-not(Test-Path -LiteralPath $file)) 'File should be deleted.';Assert-True $r.Results[0].BackupCreated 'Backup must be recorded.'}finally{Remove-ExecutionTestDirectory $root}
 }
 Invoke-Test 'Duplicate preflight accepts only exact confirmed evidence paths' {
- $i=New-ExecutionTestItem -Action 'RemoveDuplicateCopies' -Target '' -KeepPath 'C:\A.bin' -DeletePaths @('D:\B.bin') -EvidencePaths @('C:\A.bin','D:\B.bin')
- $p=Test-TetraExecutionPreflight -PlanItem $i -PathExistsProvider {param($x)$true};Assert-True $p.IsValid 'Exact duplicate selection should pass.'
+ $root=Join-Path ([IO.Path]::GetTempPath()) ('TetraDupExec_'+[guid]::NewGuid().ToString('N'))
+ New-Item -ItemType Directory -Path $root | Out-Null
+ try{
+  $a=Join-Path $root 'A.bin';$b=Join-Path $root 'B.bin';Set-Content -LiteralPath $a -Value 'same';Set-Content -LiteralPath $b -Value 'same'
+  $e=@(Get-TetraDuplicateInventory -FileData @(Get-Item -LiteralPath $a,$b))[0]
+  $i=New-ExecutionTestItem -Action 'RemoveDuplicateCopies' -Target '' -KeepPath $a -DeletePaths @($b) -DuplicateEvidence $e
+  $p=Test-TetraExecutionPreflight -PlanItem $i;Assert-True $p.IsValid 'Exact duplicate selection and unchanged content should pass.'
+ }finally{Remove-ExecutionTestDirectory $root}
 }
 Invoke-Test 'Duplicate preflight rejects path outside confirmed evidence' {
  $i=New-ExecutionTestItem -Action 'RemoveDuplicateCopies' -Target '' -KeepPath 'C:\A.bin' -DeletePaths @('E:\C.bin') -EvidencePaths @('C:\A.bin','D:\B.bin')
@@ -68,7 +82,7 @@ Invoke-Test 'Duplicate preflight never allows KeepPath in DeletePaths' {
 }
 Invoke-Test 'Successful duplicate cleanup preserves retained copy and verifies deletes' {
  $root=Join-Path ([IO.Path]::GetTempPath()) ("TetraDupExec_"+[guid]::NewGuid().ToString('N'));New-Item -ItemType Directory -Path $root|Out-Null;$a=Join-Path $root 'A.bin';$b=Join-Path $root 'B.bin';Set-Content $a 'same';Set-Content $b 'same'
- try{$i=New-ExecutionTestItem -Action 'RemoveDuplicateCopies' -Target '' -KeepPath $a -DeletePaths @($b) -EvidencePaths @($a,$b);$r=Invoke-TetraExecution -ActionPlan (New-ExecutionTestPlan @($i)) -Execute -Confirm:$false -BackupProvider {param($p,$x)New-FakeBackup};Assert-True ($r.Results[0].State -eq 'ExecutedVerified') 'Duplicate cleanup should verify.';Assert-True (Test-Path $a) 'KeepPath must remain.';Assert-True (-not(Test-Path $b)) 'DeletePath must be removed.'}finally{Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue}
+ try{$i=New-ExecutionTestItem -Action 'RemoveDuplicateCopies' -Target '' -KeepPath $a -DeletePaths @($b) -DuplicateEvidence (@(Get-TetraDuplicateInventory -FileData @(Get-Item -LiteralPath $a,$b))[0]);$r=Invoke-TetraExecution -ActionPlan (New-ExecutionTestPlan @($i)) -Execute -Confirm:$false -BackupProvider {param($p,$x)New-FakeBackup};Assert-True ($r.Results[0].State -eq 'ExecutedVerified') 'Duplicate cleanup should verify.';Assert-True (Test-Path $a) 'KeepPath must remain.';Assert-True (-not(Test-Path $b)) 'DeletePath must be removed.'}finally{Remove-ExecutionTestDirectory $root}
 }
 Invoke-Test 'Verification failure triggers rollback and reports RolledBack' {
  $script:existsCalls=0;$script:rollbackCalls=0;$i=New-ExecutionTestItem

@@ -12,7 +12,8 @@
       2. Every item is revalidated by a read-only preflight.
       3. Only CleanupFile and RemoveDuplicateCopies are supported in V1.
       4. Exact target paths must exist as files at execution time.
-      5. Duplicate keep/delete paths are revalidated against confirmed evidence.
+      5. Duplicate paths, size and hash are revalidated against scan evidence,
+         including after backup and immediately before each deletion.
       6. A backup is mandatory before any delete operation.
       7. Backup success is required before mutation.
       8. Post-change verification must confirm deleted targets are absent and,
@@ -53,6 +54,41 @@ function Test-TetraExecutionPathExists {
     return [bool](Test-Path -LiteralPath $Path -PathType Leaf)
 }
 
+function Test-TetraExecutionDuplicateContent {
+    [CmdletBinding()][OutputType([PSCustomObject])]
+    param([object]$Evidence,[Parameter(Mandatory=$true)][string[]]$Paths)
+    $errors=[System.Collections.Generic.List[string]]::new()
+    $algorithm=[string](Get-TetraExecutionPropertyValue $Evidence 'HashAlgorithm' '')
+    $expectedHash=[string](Get-TetraExecutionPropertyValue $Evidence 'Hash' '')
+    $sizeText=[string](Get-TetraExecutionPropertyValue $Evidence 'FileSizeBytes' '')
+    $expectedSize=0L
+    $hashLengths=@{SHA256=64;SHA384=96;SHA512=128}
+    if(-not $hashLengths.ContainsKey($algorithm)){$errors.Add('Duplicate evidence requires a supported hash algorithm.')}
+    elseif($expectedHash -notmatch ('\A[0-9a-fA-F]{'+$hashLengths[$algorithm]+'}\z')){$errors.Add('Duplicate evidence hash is missing or malformed.')}
+    if(-not [long]::TryParse($sizeText,[ref]$expectedSize) -or $expectedSize -lt 1){$errors.Add('Duplicate evidence requires a positive file size.')}
+    if($errors.Count -eq 0){
+        foreach($path in $Paths){
+            $stream=$null;$hasher=$null
+            try{
+                $file=Get-Item -LiteralPath $path -Force -ErrorAction Stop
+                if($file -isnot [System.IO.FileInfo]){throw 'Target is not a filesystem file.'}
+                # One read handle supplies both length and hash. Disallow writes
+                # and deletes while hashing; this is not a lock through deletion.
+                $stream=[System.IO.File]::Open($file.FullName,[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::Read)
+                if($stream.Length -ne $expectedSize){throw 'File size differs from the approved duplicate evidence.'}
+                $hasher=[System.Security.Cryptography.HashAlgorithm]::Create($algorithm.ToUpperInvariant())
+                $actualHash=[System.BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-','')
+                if($actualHash -ne $expectedHash){throw 'File content differs from the approved duplicate evidence.'}
+            }catch{$errors.Add("Duplicate content check failed for '$path': $($_.Exception.Message)")}
+            finally{
+                if($null -ne $hasher){$hasher.Dispose()}
+                if($null -ne $stream){$stream.Dispose()}
+            }
+        }
+    }
+    return [PSCustomObject]@{IsValid=($errors.Count -eq 0);Errors=$errors.ToArray()}
+}
+
 function Test-TetraExecutionPreflight {
     [CmdletBinding()][OutputType([PSCustomObject])]
     param(
@@ -72,6 +108,7 @@ function Test-TetraExecutionPreflight {
     $action=[string](Get-TetraExecutionPropertyValue $PlanItem 'ProposedAction' '')
     $targets=[System.Collections.Generic.List[string]]::new()
     $keep=''
+    $duplicateEvidence=$null
     if($action -eq 'CleanupFile'){
         $target=[string](Get-TetraExecutionPropertyValue $PlanItem 'Target' '')
         if([string]::IsNullOrWhiteSpace($target)){$errors.Add('CleanupFile requires an exact Target path.')}
@@ -95,6 +132,19 @@ function Test-TetraExecutionPreflight {
             $targets.Add($p)
         }
         if(@($evidencePaths).Count -lt 2){$errors.Add('Confirmed duplicate evidence contains fewer than two paths.')}
+        if($errors.Count -eq 0){
+            $recommendation=Get-TetraExecutionPropertyValue $PlanItem 'Evidence' $null
+            $finding=Get-TetraExecutionPropertyValue $recommendation 'Evidence' $null
+            $source=Get-TetraExecutionPropertyValue $finding 'Evidence' $null
+            # Capture scalar evidence before invoking any execution providers.
+            $duplicateEvidence=[PSCustomObject]@{
+                HashAlgorithm=[string](Get-TetraExecutionPropertyValue $source 'HashAlgorithm' '')
+                Hash=[string](Get-TetraExecutionPropertyValue $source 'Hash' '')
+                FileSizeBytes=[string](Get-TetraExecutionPropertyValue $source 'FileSizeBytes' '')
+            }
+            $content=Test-TetraExecutionDuplicateContent -Evidence $duplicateEvidence -Paths (@($keep)+$targets.ToArray())
+            foreach($message in $content.Errors){$errors.Add($message)}
+        }
     }
     else{$errors.Add("Unsupported V1 execution action: '$action'.")}
 
@@ -103,6 +153,7 @@ function Test-TetraExecutionPreflight {
         ProposedAction=$action
         Targets=$targets.ToArray()
         KeepPath=$keep
+        DuplicateEvidence=$duplicateEvidence
         Errors=$errors.ToArray()
     }
 }
@@ -172,15 +223,33 @@ function Invoke-TetraExecution {
             $results.Add((New-TetraExecutionResult -Item $item -State 'ExecutionFailed' -Message "Backup failed; zero deletion was attempted. $($_.Exception.Message)" -Preflight $preflight));continue
         }
 
-        $mutationFailed=$false;$failureMessage=''
+        $mutationFailed=$false;$failureMessage='';$deleteAttempted=$false
         try{
+            if($preflight.ProposedAction -eq 'RemoveDuplicateCopies'){
+                # Check the entire selection after backup before deleting any copy.
+                $content=Test-TetraExecutionDuplicateContent -Evidence $preflight.DuplicateEvidence -Paths (@($preflight.KeepPath)+@($preflight.Targets))
+                if(-not $content.IsValid){throw ($content.Errors -join ' | ')}
+            }
             foreach($path in @($preflight.Targets)){
+                if($preflight.ProposedAction -eq 'RemoveDuplicateCopies'){
+                    # Recheck this pair between deletes without repeatedly hashing
+                    # all remaining copies or revisiting already-deleted targets.
+                    $content=Test-TetraExecutionDuplicateContent -Evidence $preflight.DuplicateEvidence -Paths @($preflight.KeepPath,$path)
+                    if(-not $content.IsValid){throw ($content.Errors -join ' | ')}
+                }
+                $deleteAttempted=$true
                 if($null -ne $DeleteProvider){& $DeleteProvider $path $item | Out-Null}
                 else{Remove-Item -LiteralPath $path -Force -ErrorAction Stop}
             }
             foreach($path in @($preflight.Targets)){if(Test-TetraExecutionPathExists -Path $path -PathExistsProvider $PathExistsProvider){throw "Verification failed: deleted target still exists: $path"}}
             if($preflight.ProposedAction -eq 'RemoveDuplicateCopies' -and -not (Test-TetraExecutionPathExists -Path $preflight.KeepPath -PathExistsProvider $PathExistsProvider)){throw "Verification failed: KeepPath is missing after duplicate cleanup: $($preflight.KeepPath)"}
         }catch{$mutationFailed=$true;$failureMessage=$_.Exception.Message}
+
+        if($mutationFailed -and -not $deleteAttempted){
+            # A changed file belongs to the user: do not overwrite it by rolling
+            # back when this engine has not attempted any deletion.
+            $results.Add((New-TetraExecutionResult -Item $item -State 'PreflightFailed' -Message "Post-backup content check failed; zero deletion was attempted. $failureMessage" -Preflight $preflight -BackupId $backupId -BackupCreated $true));continue
+        }
 
         if(-not $mutationFailed){
             $reclaim=0L;try{$reclaim=[long](Get-TetraExecutionPropertyValue $item 'PotentialReclaimBytes' 0)}catch{}
