@@ -207,6 +207,34 @@ try{
             [IO.Directory]::Delete($redirectFolder)
         }
     }
+    Invoke-IntegrationTest 'Redirected payload with matching bytes is refused before restore' {
+        $f=New-Fixture
+        $backup=Backup-TetraItem -Path $f.Paths[0] -Category General -Confirm:$false
+        $payloadFolder=Get-TetraBackupPayloadDirectory -Category General -BackupId $backup.BackupId
+        $externalFolder=Join-Path $fixtureRoot ('external-payload-'+[guid]::NewGuid().ToString('N'))
+        Assert-OwnedPath $payloadFolder
+        Assert-OwnedPath $externalFolder
+        [IO.Directory]::Move($payloadFolder,$externalFolder)
+        New-Item -ItemType Junction -Path $payloadFolder -Target $externalFolder | Out-Null
+        try {
+            [IO.File]::WriteAllBytes($f.Paths[0],[byte[]](17,18,19))
+            $destinationHash=(Get-FileHash -LiteralPath $f.Paths[0]).Hash
+            $beforeCount=@(Get-TetraBackupList -Category General).Count
+            $integrity=Test-TetraBackupIntegrity -Category General -BackupId $backup.BackupId
+            Assert-True (-not $integrity.IsValid) 'Matching hashes must not make a redirected payload valid.'
+            Assert-True ($integrity.ItemResults[0].Reason -match 'reparse point') 'Integrity must explain the redirected payload.'
+            $rejected=$false
+            try { Restore-TetraBackup -Category General -BackupId $backup.BackupId -Confirm:$false | Out-Null }
+            catch { $rejected=$_.Exception.Message -match 'reparse point' }
+            Assert-True $rejected 'Restore must refuse the redirected payload.'
+            Assert-True ((Get-FileHash -LiteralPath $f.Paths[0]).Hash -eq $destinationHash) 'Rejected restore changed its destination.'
+            Assert-True (@(Get-TetraBackupList -Category General).Count -eq $beforeCount) 'Rejected payload created a safety snapshot.'
+        } finally {
+            # Unlink without traversing the owned target, then restore the fixture layout.
+            [IO.Directory]::Delete($payloadFolder)
+            [IO.Directory]::Move($externalFolder,$payloadFolder)
+        }
+    }
     Invoke-IntegrationTest 'Preview and WhatIf create no real backup and preserve files' {
         $f=New-Fixture -Duplicates;$before=@(Get-TetraBackupList -Category General).Count
         $preview=Invoke-TetraExecution -ActionPlan $f.Plan

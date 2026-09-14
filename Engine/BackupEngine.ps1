@@ -306,17 +306,16 @@ function Assert-TetraBackupSourceSafe {
 }
 
 # ============================================================
-# FUNCTION: Assert-TetraRestoreDestinationSafe (internal)
+# FUNCTION: Assert-TetraBackupPathNotRedirected (internal)
 # ============================================================
 <#
 .SYNOPSIS
-    Validates a restore destination path is not inside a protected
-    directory. Does NOT require the path to exist (a restore destination
-    may legitimately have been deleted). Throws on any violation.
+    Rejects reparse points in existing path components. Missing components
+    are allowed here; payload existence is checked by the integrity verifier.
 .OUTPUTS
     System.String - the canonical resolved path, if safe.
 #>
-function Assert-TetraRestoreDestinationSafe {
+function Assert-TetraBackupPathNotRedirected {
     [CmdletBinding()]
     [OutputType([string])]
     param(
@@ -336,9 +335,24 @@ function Assert-TetraRestoreDestinationSafe {
         try { $existingItem = Get-Item -LiteralPath $currentPath -Force -ErrorAction Stop }
         catch [System.Management.Automation.ItemNotFoundException] { break }
         if (($existingItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "Restore destination '$Path' traverses a reparse point ('$currentPath') and is not allowed."
+            throw "Backup or restore path '$Path' traverses a reparse point ('$currentPath') and is not allowed."
         }
     }
+
+    return $canonicalPath
+}
+
+# Reject redirected destinations and protected Tetra directories, allowing
+# missing destination files that a legitimate restore needs to recreate.
+function Assert-TetraRestoreDestinationSafe {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $canonicalPath = Assert-TetraBackupPathNotRedirected -Path $Path
 
     foreach ($protectedDir in (Get-TetraProtectedDirectories)) {
         if (Test-TetraPathIsWithinDirectory -Path $canonicalPath -DirectoryPath $protectedDir) {
@@ -393,7 +407,7 @@ function Resolve-TetraBackupPayloadItemPath {
         throw "Manifest item StoredRelativePath '$StoredRelativePath' resolves outside its backup's payload directory - refusing to use a potentially tampered manifest."
     }
 
-    return $canonicalPath
+    return (Assert-TetraBackupPathNotRedirected -Path $canonicalPath)
 }
 
 # ============================================================
@@ -999,6 +1013,7 @@ function Restore-TetraBackup {
 
     try {
         foreach ($planItem in $restorePlan) {
+            Assert-TetraBackupPathNotRedirected -Path $planItem.PayloadPath | Out-Null
             Assert-TetraRestoreDestinationSafe -Path $planItem.Destination | Out-Null
             $destinationDir = Split-Path -Path $planItem.Destination -Parent
             if (-not (Test-Path -LiteralPath $destinationDir)) {
@@ -1006,6 +1021,7 @@ function Restore-TetraBackup {
             }
 
             Assert-TetraRestoreDestinationSafe -Path $planItem.Destination | Out-Null
+            Assert-TetraBackupPathNotRedirected -Path $planItem.PayloadPath | Out-Null
             Copy-Item -LiteralPath $planItem.PayloadPath -Destination $planItem.Destination -Force
             $restoredDestinations.Add($planItem.Destination)
         }
