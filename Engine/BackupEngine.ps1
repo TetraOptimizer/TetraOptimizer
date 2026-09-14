@@ -326,6 +326,20 @@ function Assert-TetraRestoreDestinationSafe {
 
     $canonicalPath = Resolve-TetraCanonicalPath -Path $Path
 
+    # A lexical path can point outside its apparent directory through a junction
+    # or symbolic link. Inspect every existing component, including the leaf.
+    $pathRoot = [System.IO.Path]::GetPathRoot($canonicalPath)
+    $currentPath = $pathRoot
+    $components = @('') + @($canonicalPath.Substring($pathRoot.Length).Split([char[]]'\/', [System.StringSplitOptions]::RemoveEmptyEntries))
+    foreach ($component in $components) {
+        if ($component) { $currentPath = Join-Path -Path $currentPath -ChildPath $component }
+        try { $existingItem = Get-Item -LiteralPath $currentPath -Force -ErrorAction Stop }
+        catch [System.Management.Automation.ItemNotFoundException] { break }
+        if (($existingItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Restore destination '$Path' traverses a reparse point ('$currentPath') and is not allowed."
+        }
+    }
+
     foreach ($protectedDir in (Get-TetraProtectedDirectories)) {
         if (Test-TetraPathIsWithinDirectory -Path $canonicalPath -DirectoryPath $protectedDir) {
             throw "Restore destination '$Path' resolves inside a protected Tetra directory ('$protectedDir') and is not allowed."
@@ -985,11 +999,13 @@ function Restore-TetraBackup {
 
     try {
         foreach ($planItem in $restorePlan) {
+            Assert-TetraRestoreDestinationSafe -Path $planItem.Destination | Out-Null
             $destinationDir = Split-Path -Path $planItem.Destination -Parent
             if (-not (Test-Path -LiteralPath $destinationDir)) {
                 Initialize-TetraDirectory -Path $destinationDir | Out-Null
             }
 
+            Assert-TetraRestoreDestinationSafe -Path $planItem.Destination | Out-Null
             Copy-Item -LiteralPath $planItem.PayloadPath -Destination $planItem.Destination -Force
             $restoredDestinations.Add($planItem.Destination)
         }
@@ -1025,6 +1041,7 @@ function Restore-TetraBackup {
                     }
 
                     $snapshotPayloadPath = Resolve-TetraBackupPayloadItemPath -Category $Category -BackupId $preRestoreSnapshot.BackupId -StoredRelativePath $snapshotItem.StoredRelativePath
+                    Assert-TetraRestoreDestinationSafe -Path $modifiedDestination | Out-Null
                     Copy-Item -LiteralPath $snapshotPayloadPath -Destination $modifiedDestination -Force
                     $rollbackEntry.Success = $true
                 }

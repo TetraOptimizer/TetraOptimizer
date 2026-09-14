@@ -178,6 +178,35 @@ try{
         $snapshot=Get-VerifiedManifest $restored.PreRestoreSnapshotId @($f.Paths[0])
         Assert-True ($snapshot.IsAutoPreRestoreSnapshot -and $snapshot.Items[0].Sha256 -eq $changedHash) 'Safety snapshot must preserve overwritten bytes.'
     }
+    Invoke-IntegrationTest 'Manual restore rejects a destination redirected into protected Config' {
+        $redirectFolder=Join-Path $fixtureRoot ([guid]::NewGuid().ToString('N'))
+        Assert-OwnedPath $redirectFolder
+        New-Item -ItemType Directory -Path $redirectFolder | Out-Null
+        $leaf='restore-guard-'+[guid]::NewGuid().ToString('N')+'.bin'
+        $original=Join-Path $redirectFolder $leaf
+        [IO.File]::WriteAllText($original,'original backup bytes')
+        $backup=Backup-TetraItem -Path @($original) -Category General -Label 'Restore destination safety fixture' -RequestedByModule 'IntegrationTests'
+        $protectedFolder=Join-Path $isolatedProject 'Config'
+        $protectedFile=Join-Path $protectedFolder $leaf
+        Assert-OwnedPath $protectedFile
+        [IO.File]::WriteAllText($protectedFile,'protected fixture must remain unchanged')
+        $protectedHash=(Get-FileHash -LiteralPath $protectedFile).Hash
+        [IO.File]::Delete($original)
+        [IO.Directory]::Delete($redirectFolder)
+        New-Item -ItemType Junction -Path $redirectFolder -Target $protectedFolder | Out-Null
+        try {
+            $beforeIds=@(Get-TetraBackupList -Category General).Count
+            $rejected=$false
+            try { Restore-TetraBackup -Category General -BackupId $backup.BackupId -Confirm:$false | Out-Null }
+            catch { $rejected=$_.Exception.Message -match 'reparse point' }
+            Assert-True $rejected 'Restore must reject the redirected destination before copying.'
+            Assert-True ((Get-FileHash -LiteralPath $protectedFile).Hash -eq $protectedHash) 'Protected fixture was overwritten.'
+            Assert-True (@(Get-TetraBackupList -Category General).Count -eq $beforeIds) 'Rejected restore must not create a safety snapshot.'
+        } finally {
+            # Remove this owned junction without traversing its target before outer cleanup.
+            [IO.Directory]::Delete($redirectFolder)
+        }
+    }
     Invoke-IntegrationTest 'Preview and WhatIf create no real backup and preserve files' {
         $f=New-Fixture -Duplicates;$before=@(Get-TetraBackupList -Category General).Count
         $preview=Invoke-TetraExecution -ActionPlan $f.Plan
