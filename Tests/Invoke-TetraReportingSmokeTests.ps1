@@ -4,6 +4,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 . (Join-Path $root 'Engine/ReportingEngine.ps1')
+. (Join-Path $root 'Engine/SystemAnalysisEngine.ps1')
 $pass=0;$fail=0
 function Test-Case([string]$Name,[scriptblock]$Body){try{&$Body;Write-Host "[PASS] $Name" -ForegroundColor Green;$script:pass++}catch{Write-Host "[FAIL] $Name" -ForegroundColor Red;Write-Host "       -> $($_.Exception.Message)" -ForegroundColor Yellow;$script:fail++}}
 function Assert-True([bool]$v,[string]$m){if(-not$v){throw$m}}
@@ -19,6 +20,20 @@ function New-ReportPipeline {
 }
 
 Write-Host '===== Tetra Optimizer - Client Reporting Smoke Tests =====' -ForegroundColor Cyan
+Test-Case 'Real analysis source sections survive report conversion' {
+    $p=New-ReportPipeline -ExecutionState Preview -ExecuteRequested $false
+    $sections=@('Applications','ScheduledTasks','Services','Cleanup','Duplicates')
+    $p.Analysis.Findings=@($sections | ForEach-Object { New-TetraClassificationFinding -SourceSection $_ -Subject ('fixture-'+$_) -Classification Unknown -Confidence Low -Reason 'Fixture evidence is insufficient.' })
+    $r=New-TetraClientReport $p
+    for($i=0;$i -lt $sections.Count;$i++) {
+        Assert-Equal $sections[$i] $r.Issues[$i].Category 'Source section was lost.'
+        Assert-Equal $sections[$i] $r.Before.Findings[$i].Category 'Before section category was lost.'
+        Assert-Equal 'Unknown' $r.Issues[$i].Classification 'Classification changed.'
+        Assert-Equal 'Fixture evidence is insufficient.' $r.Issues[$i].Reason 'Reason changed.'
+    }
+    $legacy=New-TetraClientReport (New-ReportPipeline)
+    Assert-Equal 'Cleanup' $legacy.Issues[0].Category 'Existing Category compatibility lost.'
+}
 Test-Case 'Report snapshot contract is complete and read-only' {$r=New-TetraClientReport (New-ReportPipeline);Assert-Equal 'ClientReportSnapshot' $r.RecordType 'Record type mismatch.';Assert-True $r.IsReadOnly 'Report must be read-only.';Assert-Equal 'pipe-1' $r.PipelineRunId 'Pipeline id mismatch.'}
 Test-Case 'Before section preserves observed scan condition' {$r=New-TetraClientReport (New-ReportPipeline);Assert-Equal 'scan-1' $r.Before.SourceScanId 'Scan id missing.';Assert-Equal 1 $r.Before.InventoryCounts.Cleanup 'Cleanup count mismatch.';Assert-Equal 1 @($r.Before.Findings).Count 'Finding missing.'}
 Test-Case 'Verified execution contributes reclaimed bytes' {$r=New-TetraClientReport (New-ReportPipeline);Assert-Equal 2048 $r.Summary.BytesReclaimed 'Reclaim mismatch.';Assert-Equal 1 $r.Summary.VerifiedActions 'Verified count mismatch.';Assert-Equal 'C:\Synthetic\cache.tmp' $r.Actions[0].DeletedPaths[0] 'Deleted path mismatch.'}
@@ -33,7 +48,7 @@ Test-Case 'Invalid input is rejected clearly' {try{New-TetraClientReport ([PSCus
 Test-Case 'Reporting source contains no mutation command invocations' {$source=Get-Content -LiteralPath (Join-Path $root 'Engine/ReportingEngine.ps1') -Raw;foreach($token in @('Remove-Item','Set-ItemProperty','Stop-Service','Start-Service','Disable-ScheduledTask','Enable-ScheduledTask','pnputil','reg.exe delete')){Assert-True (-not $source.Contains($token)) "Found mutation token '$token'."}}
 
 Write-Host ''
-Write-Host "PASS: $pass/12" -ForegroundColor $(if($pass-eq12){'Green'}else{'Yellow'})
-Write-Host "FAIL: $fail/12" -ForegroundColor $(if($fail-eq0){'Green'}else{'Red'})
+Write-Host "PASS: $pass/13" -ForegroundColor $(if($pass-eq13){'Green'}else{'Yellow'})
+Write-Host "FAIL: $fail/13" -ForegroundColor $(if($fail-eq0){'Green'}else{'Red'})
 Write-Host "Overall: $(if($fail-eq0){'PASS'}else{'FAIL'})" -ForegroundColor $(if($fail-eq0){'Green'}else{'Red'})
 if($fail-gt0){exit 1}

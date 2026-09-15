@@ -58,7 +58,7 @@ function New-TetraReportRecommendationEntry {
 }
 function New-TetraReportFindingEntry {
     param([object]$Finding)
-    return [PSCustomObject]@{Subject=[string](Get-TetraReportPropertyValue $Finding 'Subject' '');Category=[string](Get-TetraReportPropertyValue $Finding 'Category' '');Classification=[string](Get-TetraReportPropertyValue $Finding 'Classification' '');Confidence=[string](Get-TetraReportPropertyValue $Finding 'Confidence' '');Reason=[string](Get-TetraReportPropertyValue $Finding 'Reason' '')}
+    return [PSCustomObject]@{Subject=[string](Get-TetraReportPropertyValue $Finding 'Subject' '');Category=[string](Get-TetraReportPropertyValue $Finding 'SourceSection' (Get-TetraReportPropertyValue $Finding 'Category' ''));Classification=[string](Get-TetraReportPropertyValue $Finding 'Classification' '');Confidence=[string](Get-TetraReportPropertyValue $Finding 'Confidence' '');Reason=[string](Get-TetraReportPropertyValue $Finding 'Reason' '')}
 }
 function New-TetraReportAfterSection {
     param([object]$PipelineSnapshot,[object[]]$Executed,[long]$Reclaimed,[object[]]$Duplicates,[object[]]$FailedExecution)
