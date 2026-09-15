@@ -231,7 +231,7 @@ function Test-TetraKnowledgeBaseItemSchema {
 
     $requiredFields = @('Id', 'Category', 'Name', 'SystemIdentifier', 'Importance', 'RiskLevel', 'Reversible', 'Dependencies', 'RecommendedProfiles', 'PreserveForProfiles', 'PerformanceImpact', 'SecurityImpact', 'IsProtected', 'RequiresAdditionalValidation')
     foreach ($field in $requiredFields) {
-        if (-not ($Item.PSObject.Properties.Name -contains $field)) {
+        if ($null -eq $Item.PSObject.Properties[$field]) {
             $errors.Add("Missing required field '$field'.")
         }
     }
@@ -358,7 +358,7 @@ function Test-TetraKnowledgeBaseSchema {
         $itemValidation = Test-TetraKnowledgeBaseItemSchema -Item $item -ExpectedCategory $Category
 
         if (-not $itemValidation.IsValid) {
-            $itemLabel = if ($item -and ($item.PSObject.Properties.Name -contains 'Id')) { $item.Id } else { "index $itemIndex" }
+            $itemLabel = if ($item -and ($null -ne $item.PSObject.Properties['Id'])) { $item.Id } else { "index $itemIndex" }
             foreach ($itemError in $itemValidation.Errors) {
                 $errors.Add("Item[$itemIndex] ('$itemLabel'): $itemError")
             }

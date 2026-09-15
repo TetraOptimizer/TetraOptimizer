@@ -225,7 +225,7 @@ $Script:TetraKbSmokeTestResults.Add((Invoke-TetraSmokeTest -Name 'Duplicate IDs 
     $originalContent = Get-Content -LiteralPath $filePath -Raw -Encoding UTF8
 
     try {
-        $items = @($originalContent | ConvertFrom-Json)
+        $items = ConvertFrom-Json -InputObject $originalContent
         $duplicated = @($items) + @($items[0])   # duplicate the first item's Id
         $duplicated | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $filePath -Encoding UTF8
 
@@ -505,7 +505,7 @@ $Script:TetraKbSmokeTestResults.Add((Invoke-TetraSmokeTest -Name 'Cross-Category
     $originalContent = Get-Content -LiteralPath $filePath -Raw -Encoding UTF8
 
     try {
-        $items = @($originalContent | ConvertFrom-Json)
+        $items = ConvertFrom-Json -InputObject $originalContent
         $target = $items | Where-Object { $_.Id -eq 'proc-msmpeng' } | Select-Object -First 1
         Assert-TetraTrue -Condition ($null -ne $target) -Message 'proc-msmpeng not found in Processes.json for the negative test setup.'
 
