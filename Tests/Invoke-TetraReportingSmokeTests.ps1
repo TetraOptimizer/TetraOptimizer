@@ -5,6 +5,7 @@ $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 . (Join-Path $root 'Engine/ReportingEngine.ps1')
 . (Join-Path $root 'Engine/SystemAnalysisEngine.ps1')
+. (Join-Path $root 'Engine/ActionPlanEngine.ps1')
 $pass=0;$fail=0
 function Test-Case([string]$Name,[scriptblock]$Body){try{&$Body;Write-Host "[PASS] $Name" -ForegroundColor Green;$script:pass++}catch{Write-Host "[FAIL] $Name" -ForegroundColor Red;Write-Host "       -> $($_.Exception.Message)" -ForegroundColor Yellow;$script:fail++}}
 function Assert-True([bool]$v,[string]$m){if(-not$v){throw$m}}
@@ -34,6 +35,24 @@ Test-Case 'Real analysis source sections survive report conversion' {
     $legacy=New-TetraClientReport (New-ReportPipeline)
     Assert-Equal 'Cleanup' $legacy.Issues[0].Category 'Existing Category compatibility lost.'
 }
+Test-Case 'Real pending plan states remain unresolved in the report' {
+    $p=New-ReportPipeline -ExecuteRequested $false
+    $p.Execution.Results=@()
+    $p.ActionPlan.Items=@(Get-TetraActionPlanStates | ForEach-Object {
+        New-TetraActionPlanItem -RecommendationId $_ -Subject $_ -PlanState $_ -Reason ('Pending fixture: '+$_)
+    })
+    $r=New-TetraClientReport $p
+    Assert-Equal 4 $r.Summary.Unresolved 'Pending states missing from summary.'
+    Assert-Equal 4 @($r.Unresolved).Count 'Pending details count mismatch.'
+    foreach($state in @('NeedsReview','NeedsSelection','NeedsActionResolution','AwaitingApproval')) {
+        $rows=@($r.Unresolved | Where-Object {$_.PlanState -eq $state})
+        Assert-Equal 1 $rows.Count 'Pending state must appear exactly once.'
+        Assert-Equal ('Pending fixture: '+$state) $rows[0].Reason 'Pending reason lost.'
+    }
+    Assert-Equal 2 $r.Summary.IntentionallyUntouched 'Blocked and NoAction must remain untouched.'
+    Assert-Equal 0 $r.Summary.VerifiedActions 'Report invented execution.'
+    Assert-Equal 0 $r.Summary.ExecutionIssues 'Pending review is not an execution failure.'
+}
 Test-Case 'Report snapshot contract is complete and read-only' {$r=New-TetraClientReport (New-ReportPipeline);Assert-Equal 'ClientReportSnapshot' $r.RecordType 'Record type mismatch.';Assert-True $r.IsReadOnly 'Report must be read-only.';Assert-Equal 'pipe-1' $r.PipelineRunId 'Pipeline id mismatch.'}
 Test-Case 'Before section preserves observed scan condition' {$r=New-TetraClientReport (New-ReportPipeline);Assert-Equal 'scan-1' $r.Before.SourceScanId 'Scan id missing.';Assert-Equal 1 $r.Before.InventoryCounts.Cleanup 'Cleanup count mismatch.';Assert-Equal 1 @($r.Before.Findings).Count 'Finding missing.'}
 Test-Case 'Verified execution contributes reclaimed bytes' {$r=New-TetraClientReport (New-ReportPipeline);Assert-Equal 2048 $r.Summary.BytesReclaimed 'Reclaim mismatch.';Assert-Equal 1 $r.Summary.VerifiedActions 'Verified count mismatch.';Assert-Equal 'C:\Synthetic\cache.tmp' $r.Actions[0].DeletedPaths[0] 'Deleted path mismatch.'}
@@ -48,7 +67,7 @@ Test-Case 'Invalid input is rejected clearly' {try{New-TetraClientReport ([PSCus
 Test-Case 'Reporting source contains no mutation command invocations' {$source=Get-Content -LiteralPath (Join-Path $root 'Engine/ReportingEngine.ps1') -Raw;foreach($token in @('Remove-Item','Set-ItemProperty','Stop-Service','Start-Service','Disable-ScheduledTask','Enable-ScheduledTask','pnputil','reg.exe delete')){Assert-True (-not $source.Contains($token)) "Found mutation token '$token'."}}
 
 Write-Host ''
-Write-Host "PASS: $pass/13" -ForegroundColor $(if($pass-eq13){'Green'}else{'Yellow'})
-Write-Host "FAIL: $fail/13" -ForegroundColor $(if($fail-eq0){'Green'}else{'Red'})
+Write-Host "PASS: $pass/14" -ForegroundColor $(if($pass-eq14){'Green'}else{'Yellow'})
+Write-Host "FAIL: $fail/14" -ForegroundColor $(if($fail-eq0){'Green'}else{'Red'})
 Write-Host "Overall: $(if($fail-eq0){'PASS'}else{'FAIL'})" -ForegroundColor $(if($fail-eq0){'Green'}else{'Red'})
 if($fail-gt0){exit 1}
